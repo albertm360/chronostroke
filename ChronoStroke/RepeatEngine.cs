@@ -63,16 +63,29 @@ public sealed class RepeatEngine : IAsyncDisposable
             return;
         }
 
-        await cts.CancelAsync();
-
-        if (loop is not null)
+        try
         {
-            // The loop swallows its own cancellation, so this is just waiting for it to unwind
-            // — importantly, past the finally block that releases the key.
-            await loop.ConfigureAwait(false);
-        }
+            await cts.CancelAsync().ConfigureAwait(false);
 
-        cts.Dispose();
+            if (loop is not null)
+            {
+                // The loop swallows its own cancellation, so this is just waiting for it to
+                // unwind — importantly, past the finally block that releases the key.
+                await loop.ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Already stopping; nothing left to cancel.
+        }
+        finally
+        {
+            // Unconditional. _cts and _loop are already cleared above, so an exception escaping
+            // from here would leak this CancellationTokenSource and leave the engine reporting
+            // IsRunning == false without anything having been cleanly stopped — after which
+            // Start would appear to work but the old loop would never have been joined.
+            cts.Dispose();
+        }
     }
 
     private async Task RunAsync(KeyCombo combo, int intervalMs, KeyCombo triggerCombo, CancellationToken ct)
