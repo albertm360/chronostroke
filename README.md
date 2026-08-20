@@ -69,6 +69,9 @@ Copy it anywhere and run it. To iterate on the code instead, `dotnet run --proje
 3. **Interval (ms)** — how long to wait between presses. Minimum 50, maximum 60000.
 4. Click **Start**, or press your hotkey from anywhere.
 
+A capture box records *every* key you press into it, `Tab` and `Space` included — that is what
+lets them be chosen. **Press `Esc` to leave a capture box** and carry on with the keyboard.
+
 Once running, switch to the target window and the keystrokes follow your focus. Press the hotkey
 again to stop.
 
