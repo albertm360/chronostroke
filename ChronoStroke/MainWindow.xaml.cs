@@ -43,11 +43,19 @@ public partial class MainWindow : Window
 
         // WM_HOTKEY is posted to this window's message queue, so we are already on the UI
         // thread here — no dispatcher marshalling needed. Toggling is async and a window
-        // procedure cannot await, so it is deliberately fire-and-forget.
+        // procedure cannot await, so the call cannot be awaited here.
         handled = true;
-        _ = _viewModel.ToggleAsync();
+        ToggleFromHotKey();
         return IntPtr.Zero;
     }
+
+    /// <summary>
+    /// async void deliberately. Discarding the Task instead (<c>_ = ToggleAsync()</c>) would
+    /// swallow any failure silently and leave the hotkey looking dead; an async void method
+    /// started on the UI thread posts its exception to the dispatcher, where App's handler
+    /// reports it.
+    /// </summary>
+    private async void ToggleFromHotKey() => await _viewModel.ToggleAsync();
 
     protected override async void OnClosing(CancelEventArgs e)
     {
