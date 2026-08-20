@@ -10,6 +10,40 @@ genuinely arguable is raised as a question, not a recommendation.
 
 ---
 
+## Status — all findings resolved
+
+Worked through on `develop` after the review, one branch per change. Every finding below is either
+fixed or answered; the notes here record what was decided, so the findings themselves are left as
+written rather than edited after the fact.
+
+| Finding | Outcome |
+| --- | --- |
+| H1 shutdown ordering | Fixed. The hook and hotkey come down, and the window is disabled, before the await. |
+| H2 no exception handling | Fixed. `DispatcherUnhandledException`, `UnobservedTaskException`, a catch-all in the loop, and the hotkey toggle made `async void` so its failures reach the dispatcher. |
+| H3 `StopAsync` leaks its CTS | Fixed. `try`/`finally`. |
+| M1 Num Lock extended | Fixed, after re-probing `MapVirtualKeyW` to confirm the claim. Regression test added. |
+| M2 scan codes on the wrong thread | Fixed. `BuildBatch` on the UI thread, `Send` anywhere. |
+| M3 per-keystroke disk I/O | Fixed. Last valid interval cached; unchanged settings are not rewritten. |
+| M4 `MainViewModel` not disposable | Fixed. `IAsyncDisposable` owns the teardown order; CA1001 moves to `MainWindow` and is suppressed with a justification. |
+| M5 capture-box focus trap | Fixed. `Esc` leaves the field, documented in the UI and the README. |
+| M6 releases stamped `1.0.0` | Fixed. Version comes from the tag, with a tag-format guard. |
+| M7 no CI, no Dependabot | Fixed. `build.yml` on push/PR with `-warnaserror` and `dotnet test`, plus `dependabot.yml`. |
+| M8 no tests | **Answered: yes.** `ChronoStroke.Tests` (xUnit, never published) — 41 tests. `CLAUDE.md` records the exception. |
+| M9 stale hotkey error | Fixed. Rejection goes to the status line; the error is reserved for the current combination. |
+| L1, L2, L3, L7, L9, L13, L15, L16, L17 | Fixed. |
+| L4 stale `PLAN.md` | Moved to `docs/PLAN.md` under a historical header. |
+| L5 roaming AppData | **Declined.** Already shipped; moving orphans existing settings for no benefit at this scale. |
+| L6 metadata and SDK pinning | Fixed. Company/Copyright/Authors, a generated multi-resolution icon, and `global.json`. |
+| L8 `PublishReadyToRun` | **Measured and rejected.** +4.6 MB and ~40 ms *worse* warm start, because the extra image goes through single-file decompression. Numbers recorded in the csproj. |
+| L10 no `.editorconfig` | Added, describing the style already in use. |
+| L11, L12 sizing and accessibility | Fixed. `SizeToContent`, `LabeledBy`, `LiveSetting`. |
+| L14 narrow exception filters | Fixed on both the load and save paths. |
+| L18 cache `DisplayName` | **Not applicable.** `KeyCombo` is a readonly record struct; there is nowhere to cache. |
+| L19 teardown releases modifiers | **Deliberate.** An unmatched key-up is the safer failure than leaving a modifier the loop pressed itself. |
+| L20 README overclaims shutdown | Fixed. The caveat about the process being killed is now stated. |
+
+---
+
 ## Executive summary
 
 ChronoStroke is a small, well-built WPF utility on `net10.0-windows` that injects scan-code
