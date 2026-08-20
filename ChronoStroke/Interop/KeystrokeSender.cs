@@ -133,11 +133,14 @@ internal static class KeystrokeSender
     ///   Home 0x47 = Numpad7      Up    0x48 = Numpad8     PageUp   0x49 = Numpad9
     ///   Left 0x4B = Numpad4      Right 0x4D = Numpad6     End      0x4F = Numpad1
     ///   Down 0x50 = Numpad2      PgDn  0x51 = Numpad3     Insert   0x52 = Numpad0
-    ///   Delete 0x53 = Decimal    NumLock 0x45 = Pause
+    ///   Delete 0x53 = Decimal
     /// </code>
     /// Omit the flag and picking "Left Arrow" silently sends Numpad 4.
-    /// MapVirtualKeyW DOES report the prefix for Right Ctrl/Alt, Win, Apps and numpad divide,
-    /// so those are deliberately absent here — the 0xE0 check above already catches them.
+    /// MapVirtualKeyW DOES report the prefix for Right Ctrl/Alt, Win, Apps, numpad divide and
+    /// the browser/media keys, so those are deliberately absent here — the 0xE0 check above
+    /// already catches them, and adding them would double-flag nothing but confusion.
+    /// Num Lock does not belong here either: it maps to a bare 0x45 and nothing else claims
+    /// that code (Pause is 0xE11D, which takes the virtual-key fallback above).
     /// </remarks>
     private static bool IsAlwaysExtended(ushort vk) => vk switch
     {
@@ -145,7 +148,6 @@ internal static class KeystrokeSender
         0x23 or 0x24 => true,                     // End / Home
         0x25 or 0x26 or 0x27 or 0x28 => true,     // Left / Up / Right / Down
         0x2D or 0x2E => true,                     // Insert / Delete
-        0x90 => true,                             // Num Lock
         _ => false,
     };
 }
