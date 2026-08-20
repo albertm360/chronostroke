@@ -13,7 +13,7 @@ namespace ChronoStroke;
     Justification = "A Window's lifetime is owned by WPF, which never calls IDisposable on it. " +
                     "OnClosing is where a window releases what it owns, and it disposes the view " +
                     "model there — before the window is allowed to finish closing.")]
-public partial class MainWindow : Window
+internal partial class MainWindow : Window
 {
     private readonly MainViewModel _viewModel = new();
     private HwndSource? _source;
@@ -41,7 +41,10 @@ public partial class MainWindow : Window
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        if (msg != NativeMethods.WM_HOTKEY || wParam.ToInt32() != NativeMethods.HotKeyId)
+        // Compared as nint rather than via wParam.ToInt32(), which throws OverflowException
+        // when the high 32 bits are set. Only WM_HOTKEY reaches it today, where the value is a
+        // small id, but a comparison that cannot throw costs nothing.
+        if (msg != NativeMethods.WM_HOTKEY || wParam != NativeMethods.HotKeyId)
         {
             return IntPtr.Zero;
         }

@@ -12,7 +12,7 @@ namespace ChronoStroke.Interop;
 /// queue, and unregistering after the HWND is destroyed is pointless. In practice the window
 /// disposes this during OnClosing, while its handle is still valid.
 /// </remarks>
-public sealed class GlobalHotKey(IntPtr windowHandle) : IDisposable
+internal sealed class GlobalHotKey(IntPtr windowHandle) : IDisposable
 {
     private bool _registered;
 
