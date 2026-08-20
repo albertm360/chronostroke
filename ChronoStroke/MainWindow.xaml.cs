@@ -89,6 +89,13 @@ public partial class MainWindow : Window
         _viewModel.SaveSettings();
 
         _shutdownComplete = true;
-        Close();
+
+        // Post the real close rather than calling it here. WPF keeps the window flagged as
+        // closing for the whole synchronous OnClosing call and throws from any Close() that
+        // arrives while the flag is set — and the await above is not a guarantee that we have
+        // left that call: with the engine already stopped, DisposeEngineAsync completes without
+        // ever yielding, so execution reaches this line still on the original stack. Queuing it
+        // means it runs once the dispatcher has unwound the close we are inside.
+        await Dispatcher.InvokeAsync(Close);
     }
 }
