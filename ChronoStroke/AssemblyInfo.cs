@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Windows;
 
@@ -11,3 +12,8 @@ using System.Windows;
 // than searched for — but this ships as a single .exe that people drop into their Downloads
 // folder and run, and the attribute costs one line to make the search path explicit anyway.
 [assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+
+// The application's types are internal — nothing consumes this assembly. The test project is the
+// one exception: it exercises the interop's flag decisions and the pure functions directly rather
+// than through a window, which is the only way to test them without injecting real input.
+[assembly: InternalsVisibleTo("ChronoStroke.Tests")]

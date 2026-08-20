@@ -8,7 +8,10 @@ A small Windows 11 desktop utility. Single window, no server component, no cloud
 - MVVM structure
 
 ## Dependency rules
-- **CommunityToolkit.Mvvm is the only NuGet dependency permitted.** Ask before adding anything else.
+- **CommunityToolkit.Mvvm is the only NuGet dependency permitted in the app.** Ask before adding
+  anything else.
+- `ChronoStroke.Tests` is an agreed exception, and the only one: it may use Microsoft.NET.Test.Sdk
+  and xUnit. It is never published and nothing it references may leak into the app project.
 - Do NOT add WPF-UI, MahApps, ModernWpf, or any other third-party UI package — the built-in
   Fluent theme covers what this app needs.
 - Do NOT add InputSimulator, WindowsInput, or similar input-simulation packages. The Win32

@@ -151,6 +151,12 @@ ChronoStroke/
 ├── KeyCombo.cs               A key plus its modifiers
 ├── AppSettings.cs            Persisted shape
 └── SettingsStore.cs          Atomic load/save under %AppData%
+
+ChronoStroke.Tests/           Interop flag decisions, validation, settings shape
 ```
 
-The only NuGet dependency is [CommunityToolkit.Mvvm](https://github.com/CommunityToolkit/dotnet).
+The application's only NuGet dependency is
+[CommunityToolkit.Mvvm](https://github.com/CommunityToolkit/dotnet). The test project adds xUnit,
+and is never published.
+
+Run the tests with `dotnet test`.
