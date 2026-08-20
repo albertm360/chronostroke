@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Windows;
 using System.Windows.Interop;
 using ChronoStroke.Interop;
@@ -8,6 +9,10 @@ namespace ChronoStroke;
 /// <summary>
 /// Interaction logic for MainWindow.xaml.
 /// </summary>
+[SuppressMessage("Microsoft.Design", "CA1001:TypesThatOwnDisposableFieldsShouldBeDisposable",
+    Justification = "A Window's lifetime is owned by WPF, which never calls IDisposable on it. " +
+                    "OnClosing is where a window releases what it owns, and it disposes the view " +
+                    "model there — before the window is allowed to finish closing.")]
 public partial class MainWindow : Window
 {
     private readonly MainViewModel _viewModel = new();
@@ -82,19 +87,18 @@ public partial class MainWindow : Window
         // would tear down the HWND out from under WPF mid-shutdown.
         _source?.RemoveHook(WndProc);
         _source = null;
-        _viewModel.ReleaseHotkey();
         IsEnabled = false;              // no more Start button either
 
-        await _viewModel.DisposeEngineAsync();
-        _viewModel.SaveSettings();
+        // Everything the view model owns comes down in its own order, not one dictated here.
+        await _viewModel.DisposeAsync();
 
         _shutdownComplete = true;
 
         // Post the real close rather than calling it here. WPF keeps the window flagged as
         // closing for the whole synchronous OnClosing call and throws from any Close() that
         // arrives while the flag is set — and the await above is not a guarantee that we have
-        // left that call: with the engine already stopped, DisposeEngineAsync completes without
-        // ever yielding, so execution reaches this line still on the original stack. Queuing it
+        // left that call: with the engine already stopped, DisposeAsync completes without ever
+        // yielding, so execution reaches this line still on the original stack. Queuing it
         // means it runs once the dispatcher has unwound the close we are inside.
         await Dispatcher.InvokeAsync(Close);
     }
