@@ -83,9 +83,36 @@ jobs:
         run: |
           $version = $env:TAG -replace '^v', ''
 
+          # Lift this version's section out of CHANGELOG.md: everything between
+          # its heading and the next one. Failing here is deliberate — a release
+          # that cannot say what changed in it is not ready to go out, and the
+          # only fix is to write the section, which is the point.
+          $lines = Get-Content CHANGELOG.md
+          $start = -1
+          $end = $lines.Count
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+              if ($lines[$i] -match "^##\s+\[$([regex]::Escape($version))\]") {
+                  $start = $i + 1
+                  continue
+              }
+              if ($start -ge 0 -and $lines[$i] -match '^##\s+\[') {
+                  $end = $i
+                  break
+              }
+          }
+          if ($start -lt 0) {
+              throw "CHANGELOG.md has no '## [$version]' section. Add one and re-tag."
+          }
+
+          $changelog = ($lines[$start..($end - 1)] -join "`n").Trim()
+          if (-not $changelog) {
+              throw "The '## [$version]' section in CHANGELOG.md is empty."
+          }
+
           # Notes live in a template file so this step stays free of nested
           # quoting between YAML, PowerShell and Markdown.
           (Get-Content .github/release-notes-template.md -Raw).
+            Replace('__CHANGELOG__', $changelog).
             Replace('__SHA256__', $env:SHA256).
             Replace('__COMMIT__', $env:COMMIT).
             Replace('__RUN_URL__', $env:RUN_URL) |

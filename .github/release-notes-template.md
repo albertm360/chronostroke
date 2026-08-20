@@ -1,3 +1,9 @@
+## What's changed
+
+__CHANGELOG__
+
+---
+
 Download `ChronoStroke.exe` below and run it. There is nothing to install — it is a single
 self-contained file and needs no .NET runtime on the machine.
 

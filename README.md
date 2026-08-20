@@ -43,6 +43,12 @@ prerequisite.
 
 ## Getting started
 
+### Download
+
+Grab `ChronoStroke.exe` from the [latest release](https://github.com/albertm360/chronostroke/releases/latest).
+It is a single self-contained file — copy it anywhere and run it. The release page carries a SHA-256
+checksum, and what changed in each version is in [CHANGELOG.md](CHANGELOG.md).
+
 ### Build from source
 
 Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download).
