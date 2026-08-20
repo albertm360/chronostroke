@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -15,6 +15,14 @@
     <Product>ChronoStroke</Product>
     <AssemblyTitle>ChronoStroke</AssemblyTitle>
     <Description>Repeats a configurable keystroke to whichever window has focus.</Description>
+
+    <!-- The exe is unsigned, so SmartScreen will warn about it whatever we do. Filling in the
+         metadata at least means the Properties dialog can say where it came from instead of
+         showing a blank publisher. -->
+    <Company>Albert Morlà</Company>
+    <Authors>Albert Morlà</Authors>
+    <Copyright>Copyright © 2026 Albert Morlà</Copyright>
+    <ApplicationIcon>ChronoStroke.ico</ApplicationIcon>
     <!-- Development placeholder only. Released builds are stamped from the git tag by
          .github/workflows/release.yml, which passes -p:Version explicitly. -->
     <Version>1.0.0</Version>
@@ -41,6 +49,13 @@
 
     <!-- PublishTrimmed is deliberately absent: trimming is not supported for WPF. It builds,
          then fails at runtime when XAML resolves a type by name that the trimmer removed. -->
+
+    <!-- PublishReadyToRun is absent because it was measured, not assumed. Precompiling makes
+         cold start *worse* here: the R2R images add 4.6 MB to the exe, and every byte of that
+         goes through the single-file decompression above before anything runs, which costs more
+         than the JIT it saves. Two runs, nine starts each, warm medians 555 ms without against
+         594 ms with, ranges not overlapping. Re-measure before reconsidering, and re-measure
+         with EnableCompressionInSingleFile turned off, since that is what the trade is against. -->
   </PropertyGroup>
 
   <ItemGroup>

@@ -1,3 +1,11 @@
+> **Historical.** This is the original plan, kept for the record. Everything below describes
+> intent before the app was written, and the "open questions" at the end were all resolved during
+> implementation: settings live in `%AppData%\ChronoStroke\settings.json`, the app is a normal
+> window rather than a tray utility, and a hotkey that collides with the repeated key is blocked.
+> For how ChronoStroke actually works, see the [README](../README.md).
+
+---
+
 # Keystroke Repeater — Spec & Build Plan
 
 ## What the app does
