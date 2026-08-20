@@ -1,12 +1,12 @@
 using System.Globalization;
-using System.Windows;
+using System.Windows.Threading;
 using ChronoStroke.Interop;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
 namespace ChronoStroke;
 
-public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
+internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 {
     /// <summary>
     /// Guard rail. Below this the machine is flooded with input faster than most windows can
@@ -17,6 +17,13 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     public const int MaxIntervalMs = 60_000;
 
     private readonly RepeatEngine _engine = new();
+
+    /// <summary>
+    /// The dispatcher of the thread that built this view model — the UI thread. Captured rather
+    /// than reached for through Application.Current so the view model does not depend on a
+    /// running WPF application to marshal its own events.
+    /// </summary>
+    private readonly Dispatcher _dispatcher = Dispatcher.CurrentDispatcher;
 
     private GlobalHotKey? _hotKey;
 
@@ -54,25 +61,31 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         ApplySettings(SettingsStore.Load());
     }
 
-    private static void OnUiThread(Action action)
+    private void OnUiThread(Action action)
     {
-        var dispatcher = Application.Current?.Dispatcher;
-        if (dispatcher is null)
+        // Engine events arrive on thread-pool threads and have to be marshalled. Anything
+        // already on the right thread runs inline instead of queueing behind the current
+        // message, which keeps the ordering obvious.
+        if (_dispatcher.CheckAccess())
         {
-            action();       // no WPF app running (tests)
+            action();
             return;
         }
 
-        dispatcher.InvokeAsync(action);
+        // InvokeAsync on a dispatcher that has already shut down abandons the operation quietly
+        // rather than throwing — which is the behaviour we want during teardown.
+        _dispatcher.InvokeAsync(action);
     }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HotkeyError), nameof(HasHotkeyError))]
+    [NotifyPropertyChangedFor(nameof(HotkeyWarning), nameof(HasHotkeyWarning))]
     [NotifyCanExecuteChangedFor(nameof(StartCommand))]
     public partial KeyCombo SendCombo { get; set; }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HotkeyError), nameof(HasHotkeyError))]
+    [NotifyPropertyChangedFor(nameof(HotkeyWarning), nameof(HasHotkeyWarning))]
     [NotifyCanExecuteChangedFor(nameof(StartCommand))]
     public partial KeyCombo HotkeyCombo { get; set; }
 
@@ -110,6 +123,24 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     public string? HotkeyError => CollisionError ?? _hotkeyRegistrationError;
 
     public bool HasHotkeyError => HotkeyError is not null;
+
+    /// <summary>
+    /// Advisory, not blocking. The two combinations differ, so nothing is wrong yet — but they
+    /// share a virtual key, and the modifiers are the only thing keeping them apart. Send F8
+    /// with Ctrl+F8 as the hotkey and the configuration works exactly as intended until the
+    /// moment the user happens to hold Ctrl for something unrelated, at which point the loop's
+    /// own F8 becomes Ctrl+F8 and switches itself off. WaitForTriggerReleaseAsync covers the
+    /// start; nothing can cover the middle, so the honest answer is to say so up front.
+    /// </summary>
+    public string? HotkeyWarning =>
+        CollisionError is null && !SendCombo.IsEmpty && !HotkeyCombo.IsEmpty
+        && SendCombo.VirtualKey == HotkeyCombo.VirtualKey
+            ? $"{HotkeyCombo.DisplayName} and {SendCombo.DisplayName} are the same key with "
+              + "different modifiers. Holding a modifier while the loop runs can turn the "
+              + "repeated keystroke into the hotkey and stop it."
+            : null;
+
+    public bool HasHotkeyWarning => HotkeyWarning is not null;
 
     // ---------------------------------------------------------------- settings
 
@@ -249,6 +280,8 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             _applyingHotkey = false;
             OnPropertyChanged(nameof(HotkeyError));
             OnPropertyChanged(nameof(HasHotkeyError));
+            OnPropertyChanged(nameof(HotkeyWarning));
+            OnPropertyChanged(nameof(HasHotkeyWarning));
             StartCommand.NotifyCanExecuteChanged();
         }
     }

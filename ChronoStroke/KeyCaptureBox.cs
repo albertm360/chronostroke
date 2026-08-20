@@ -7,7 +7,7 @@ namespace ChronoStroke;
 /// <summary>
 /// A read-only text box that records the next key combination pressed into it.
 /// </summary>
-public class KeyCaptureBox : TextBox
+internal sealed class KeyCaptureBox : TextBox
 {
     static KeyCaptureBox()
     {

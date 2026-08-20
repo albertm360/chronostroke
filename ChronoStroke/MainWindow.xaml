@@ -1,4 +1,5 @@
 <Window x:Class="ChronoStroke.MainWindow"
+        x:ClassModifier="internal"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -39,6 +40,15 @@
                        Foreground="{DynamicResource SystemFillColorCriticalBrush}"
                        Text="{Binding HotkeyError}"
                        Visibility="{Binding HasHotkeyError, Converter={StaticResource BoolToVis}}" />
+
+            <!-- Advisory rather than an error: the configuration is legal and will run. Caution
+                 colour keeps it visually distinct from the blocking messages above. -->
+            <TextBlock Margin="0,6,0,0"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       Foreground="{DynamicResource SystemFillColorCautionBrush}"
+                       Text="{Binding HotkeyWarning}"
+                       Visibility="{Binding HasHotkeyWarning, Converter={StaticResource BoolToVis}}" />
 
             <TextBlock x:Name="IntervalLabel" Text="Interval (ms)" Margin="0,18,0,6" />
             <TextBox Text="{Binding IntervalText, UpdateSourceTrigger=PropertyChanged}"

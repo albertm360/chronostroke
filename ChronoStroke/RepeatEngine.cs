@@ -9,7 +9,7 @@ namespace ChronoStroke;
 /// Start and Stop are expected to be called from the UI thread only (a button, or the WM_HOTKEY
 /// hook, which is delivered on the UI thread). The loop itself runs on the thread pool.
 /// </remarks>
-public sealed class RepeatEngine : IAsyncDisposable
+internal sealed class RepeatEngine : IAsyncDisposable
 {
     /// <summary>Target key-down duration. Trimmed if the interval is too short to fit it.</summary>
     private const int HoldMilliseconds = 40;

@@ -7,7 +7,7 @@ namespace ChronoStroke;
 /// <summary>
 /// Reads and writes settings.json under %AppData%.
 /// </summary>
-public static class SettingsStore
+internal static class SettingsStore
 {
     public static string FilePath { get; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
