@@ -6,7 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 
 namespace ChronoStroke;
 
-public partial class MainViewModel : ObservableObject
+public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 {
     /// <summary>
     /// Guard rail. Below this the machine is flooded with input faster than most windows can
@@ -210,8 +210,6 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    public void ReleaseHotkey() => _hotKey?.Dispose();
-
     private static string? ValidateInterval(string? text, out int value)
     {
         value = 0;
@@ -294,5 +292,22 @@ public partial class MainViewModel : ObservableObject
             : $"Running — {SendCombo.DisplayName} every {interval} ms. {HotkeyCombo.DisplayName} to stop.";
     }
 
-    public ValueTask DisposeEngineAsync() => _engine.DisposeAsync();
+    /// <summary>
+    /// Shuts the view model down in the one order that is safe, so no caller has to know it.
+    /// </summary>
+    /// <remarks>
+    /// The hotkey goes first: while it is registered, a WM_HOTKEY can still arrive and start the
+    /// engine, and the await below keeps the dispatcher pumping long enough for that to happen.
+    /// Stopping the engine second is what guarantees no key is left held down — it waits for the
+    /// loop to unwind past its key-up. Saving last means the file reflects the final state.
+    /// </remarks>
+    public async ValueTask DisposeAsync()
+    {
+        _hotKey?.Dispose();
+        _hotKey = null;
+
+        await _engine.DisposeAsync().ConfigureAwait(true);
+
+        SaveSettings();
+    }
 }
