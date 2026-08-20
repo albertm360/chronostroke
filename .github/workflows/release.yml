@@ -1,0 +1,86 @@
+name: Release
+
+# Publishing is driven by tags: push v1.0.0 and this builds it and creates the
+# matching GitHub release. Nothing runs on ordinary pushes to main.
+on:
+  push:
+    tags:
+      - "v*"
+
+# Read-only by default; the one job that needs to write says so for itself.
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    permissions:
+      # Needed to create the release and upload the executable to it.
+      contents: write
+
+    steps:
+      # Actions are pinned to commit SHAs rather than tags. A tag can be moved
+      # to point at different code after the fact; a SHA cannot. Dependabot is
+      # enabled on this repo and will raise PRs to bump them.
+      - name: Check out the tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Build
+        run: dotnet build --configuration Release
+
+      - name: Publish single-file executable
+        # RuntimeIdentifier, self-contained and single-file all live in the
+        # csproj, so the bare command produces the shippable artifact.
+        run: dotnet publish --configuration Release
+
+      - name: Stage the artifact and checksum it
+        shell: pwsh
+        run: |
+          $publish = "ChronoStroke/bin/Release/net10.0-windows/win-x64/publish/ChronoStroke.exe"
+          if (-not (Test-Path $publish)) { throw "Expected the published exe at $publish" }
+
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Copy-Item $publish artifacts/ChronoStroke.exe
+
+          # The exe is unsigned, so a checksum is the only way for someone to
+          # confirm their download matches what this workflow actually built.
+          $hash = (Get-FileHash artifacts/ChronoStroke.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  ChronoStroke.exe" | Out-File artifacts/ChronoStroke.exe.sha256 -Encoding ascii
+
+          $size = [math]::Round((Get-Item artifacts/ChronoStroke.exe).Length / 1MB, 1)
+          Write-Output "ChronoStroke.exe  $size MB"
+          Write-Output "sha256  $hash"
+          "SHA256=$hash" | Out-File -Append $env:GITHUB_ENV -Encoding utf8
+
+      - name: Create the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          COMMIT: ${{ github.sha }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          $version = $env:TAG -replace '^v', ''
+
+          # Notes live in a template file so this step stays free of nested
+          # quoting between YAML, PowerShell and Markdown.
+          (Get-Content .github/release-notes-template.md -Raw).
+            Replace('__SHA256__', $env:SHA256).
+            Replace('__COMMIT__', $env:COMMIT).
+            Replace('__RUN_URL__', $env:RUN_URL) |
+            Out-File release-notes.md -Encoding utf8
+
+          gh release create $env:TAG `
+            artifacts/ChronoStroke.exe `
+            artifacts/ChronoStroke.exe.sha256 `
+            --title "ChronoStroke $version" `
+            --notes-file release-notes.md `
+            --verify-tag
