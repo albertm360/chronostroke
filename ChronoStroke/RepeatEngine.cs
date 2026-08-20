@@ -116,6 +116,13 @@ public sealed class RepeatEngine : IAsyncDisposable
         {
             // Expected on Stop.
         }
+        catch (Exception ex)
+        {
+            // Anything else would otherwise fault the loop task and surface later, out of
+            // context, when StopAsync awaits it. Report it in the status line instead and let
+            // the finally block below release the key.
+            SendFailed?.Invoke(this, $"The repeat loop stopped unexpectedly: {ex.Message}");
+        }
         finally
         {
             // Unconditional. If cancellation landed between Press and Release the key is still
