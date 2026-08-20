@@ -47,8 +47,14 @@ public sealed class RepeatEngine : IAsyncDisposable
             return;
         }
 
+        // Resolve the scan codes here rather than in the loop. Start runs on the UI thread,
+        // which owns the keyboard layout the user captured the key on; the loop does not.
+        // See KeystrokeSender.BuildBatch for why that distinction bites.
+        var down = KeystrokeSender.BuildBatch(combo, keyUp: false);
+        var up = KeystrokeSender.BuildBatch(combo, keyUp: true);
+
         _cts = new CancellationTokenSource();
-        _loop = Task.Run(() => RunAsync(combo, intervalMs, triggerCombo, _cts.Token));
+        _loop = Task.Run(() => RunAsync(down, up, intervalMs, triggerCombo, _cts.Token));
     }
 
     public async Task StopAsync()
@@ -88,7 +94,12 @@ public sealed class RepeatEngine : IAsyncDisposable
         }
     }
 
-    private async Task RunAsync(KeyCombo combo, int intervalMs, KeyCombo triggerCombo, CancellationToken ct)
+    private async Task RunAsync(
+        NativeMethods.INPUT[] down,
+        NativeMethods.INPUT[] up,
+        int intervalMs,
+        KeyCombo triggerCombo,
+        CancellationToken ct)
     {
         // Never let the hold swallow the whole interval; at the 50 ms floor this gives 25 ms
         // down, 25 ms up rather than a key that is held permanently.
@@ -102,13 +113,15 @@ public sealed class RepeatEngine : IAsyncDisposable
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(intervalMs));
             while (true)
             {
-                var down = KeystrokeSender.Press(combo);
+                var pressed = KeystrokeSender.Send(down);
                 await Task.Delay(hold, ct).ConfigureAwait(false);
-                var up = KeystrokeSender.Release(combo);
+                var released = KeystrokeSender.Send(up);
 
                 // Report a failure once rather than once per tick — a broken send fails every
                 // time, and 20 identical messages a second is noise, not information.
-                var failure = !down.Success ? down.Describe() : !up.Success ? up.Describe() : null;
+                var failure = !pressed.Success ? pressed.Describe()
+                    : !released.Success ? released.Describe()
+                    : null;
                 if (failure is not null && failure != lastReportedFailure)
                 {
                     lastReportedFailure = failure;
@@ -142,7 +155,7 @@ public sealed class RepeatEngine : IAsyncDisposable
             // physically down as far as the target window is concerned, and leaving it that way
             // means a game holding an action forever. A key-up for a key that was never down is
             // harmless, so this is safe to send even on the paths that did not press anything.
-            KeystrokeSender.Release(combo);
+            KeystrokeSender.Send(up);
         }
     }
 

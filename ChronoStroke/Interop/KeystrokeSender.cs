@@ -18,17 +18,26 @@ internal readonly record struct SendOutcome(int Expected, uint Inserted, int Las
 /// </summary>
 internal static class KeystrokeSender
 {
-    /// <summary>Presses the modifiers then the key, in one atomic batch.</summary>
-    public static SendOutcome Press(KeyCombo combo) => Send(combo, keyUp: false);
-
-    /// <summary>Releases the key then the modifiers — reverse order, one atomic batch.</summary>
-    public static SendOutcome Release(KeyCombo combo) => Send(combo, keyUp: true);
-
-    private static SendOutcome Send(KeyCombo combo, bool keyUp)
+    /// <summary>
+    /// Builds the batch for one combination: <paramref name="keyUp"/> false presses the
+    /// modifiers then the key, true releases them in reverse.
+    /// </summary>
+    /// <remarks>
+    /// Call this from the UI thread and reuse the result. MapVirtualKeyW below resolves against
+    /// the *calling thread's* active keyboard layout (GetKeyboardLayout(0)), and the repeat loop
+    /// runs on the thread pool, where that is the process default rather than the layout the
+    /// user was on when they captured the key. On a QWERTY-family layout the two tables agree,
+    /// so the difference is invisible until someone on AZERTY or Dvorak runs the app and gets
+    /// the wrong key — the worst kind of bug to diagnose after the fact.
+    /// Building once also keeps the loop free of P/Invokes and allocations: the combination is
+    /// fixed for the whole run, but resolving per tick meant up to ten MapVirtualKeyW calls and
+    /// two arrays every time, forty times a second at the 50 ms floor.
+    /// </remarks>
+    public static NativeMethods.INPUT[] BuildBatch(KeyCombo combo, bool keyUp)
     {
         if (combo.IsEmpty)
         {
-            return new SendOutcome(0, 0, 0);
+            return [];
         }
 
         // Press order is modifiers-then-key, which is what physically happens when you hold
@@ -50,12 +59,26 @@ internal static class KeystrokeSender
             inputs[i] = BuildKeyEvent(vk, keyUp);
         }
 
+        return inputs;
+    }
+
+    /// <summary>
+    /// Sends a batch built by <see cref="BuildBatch"/>. Safe to call from any thread — every
+    /// layout-sensitive decision was already made when the batch was built.
+    /// </summary>
+    public static SendOutcome Send(NativeMethods.INPUT[] batch)
+    {
+        if (batch.Length == 0)
+        {
+            return new SendOutcome(0, 0, 0);
+        }
+
         // One call for the whole batch. The docs guarantee events from a single SendInput call
         // are inserted serially and are NOT interleaved with real keyboard input or with other
         // SendInput calls — so a combo can never be torn apart halfway through.
-        var inserted = NativeMethods.SendInput((uint)count, ref inputs[0], NativeMethods.InputSize);
-        var error = inserted == count ? 0 : Marshal.GetLastWin32Error();
-        return new SendOutcome(count, inserted, error);
+        var inserted = NativeMethods.SendInput((uint)batch.Length, ref batch[0], NativeMethods.InputSize);
+        var error = inserted == batch.Length ? 0 : Marshal.GetLastWin32Error();
+        return new SendOutcome(batch.Length, inserted, error);
     }
 
     private static NativeMethods.INPUT BuildKeyEvent(ushort virtualKey, bool keyUp) =>
