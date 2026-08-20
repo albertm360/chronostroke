@@ -11,6 +11,24 @@ Add the section before tagging.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-21
+
+### Added
+
+- **The interval box has up and down arrows.** Holding one keeps stepping. The Up and Down keys
+  do the same thing while the box has focus, and an arrow greys out once the interval reaches
+  the 50 ms floor or the 60,000 ms ceiling.
+- **A Step box beside the interval sets how far each press moves it** — set it to 5 and 300 ms
+  becomes 305 ms. It is saved with the rest of the settings, and a `settings.json` written before
+  this existed loads with the 10 ms default rather than the 1 ms minimum.
+
+### Changed
+
+- **The repository is a single branch again.** `develop` is retired: work now happens on a
+  short-lived branch that merges into `main` with `--no-ff` and is deleted, and releases are
+  tagged directly on `main` rather than through a release branch. Dependabot and the build
+  workflow follow `main` accordingly.
+
 ## [1.1.0] - 2026-08-20
 
 Everything in this release came out of a full architecture and code quality review of the
@@ -68,6 +86,7 @@ repository. Three of the fixes below are things you could hit in normal use.
   configurable interval, toggled with a global hotkey. Scan-code injection through `SendInput`,
   settings persisted between runs, and a Fluent UI that follows the system light/dark theme.
 
-[Unreleased]: https://github.com/albertm360/chronostroke/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/albertm360/chronostroke/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/albertm360/chronostroke/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/albertm360/chronostroke/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/albertm360/chronostroke/releases/tag/v1.0.0

@@ -1,17 +1,15 @@
 # release.yml pins its actions to commit SHAs, which is only safe if something
 # raises the bumps — otherwise the pins quietly rot. This is that something.
 #
-# target-branch is develop on both ecosystems because this repository runs
-# gitflow: main only advances through a release, so a dependency PR aimed at it
-# lands a change on the release branch that never passed through develop. Note
-# that Dependabot reads this file from the default branch only — a change here
-# has no effect until it reaches main.
+# No target-branch on either ecosystem: main is the only long-lived branch, so
+# Dependabot's default — the repository's default branch — is already right.
+# Note that Dependabot reads this file from the default branch only, so a change
+# here has no effect until it reaches main.
 version: 2
 
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
-    target-branch: "develop"
     schedule:
       interval: "weekly"
     commit-message:
@@ -19,7 +17,6 @@ updates:
 
   - package-ecosystem: "nuget"
     directory: "/"
-    target-branch: "develop"
     schedule:
       interval: "weekly"
     commit-message:
