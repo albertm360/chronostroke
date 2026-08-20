@@ -1,0 +1,48 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <!-- Required by [LibraryImport]: the source generator emits pointer-based marshalling
+         stubs. This does not make our own code unsafe - we write no pointer code. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Product>ChronoStroke</Product>
+    <AssemblyTitle>ChronoStroke</AssemblyTitle>
+    <Description>Repeats a configurable keystroke to whichever window has focus.</Description>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+
+    <!-- PublishSelfContained rather than SelfContained: the former applies only to publish,
+         whereas SelfContained would also copy the whole runtime into bin on every ordinary
+         build, for no benefit during development. -->
+    <PublishSelfContained>true</PublishSelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+
+    <!-- Without this the native runtime .dlls sit next to the exe instead of inside it, which
+         defeats the point of a single file. -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+
+    <!-- Roughly halves the produced exe in exchange for slightly slower first start. -->
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+
+    <!-- Drops the localised satellite assemblies for languages this app has no strings in. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+
+    <!-- PublishTrimmed is deliberately absent: trimming is not supported for WPF. It builds,
+         then fails at runtime when XAML resolves a type by name that the trimmer removed. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+  </ItemGroup>
+
+</Project>

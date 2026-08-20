@@ -1,0 +1,19 @@
+<Application x:Class="ChronoStroke.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:ChronoStroke"
+             StartupUri="MainWindow.xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- Fluent.xaml follows the system light/dark setting on its own. The explicit
+                     Fluent.Light.xaml / Fluent.Dark.xaml variants pin one mode instead.
+
+                     We use the resource dictionary rather than the ThemeMode property because
+                     ThemeMode is still marked [Experimental("WPF0001")] in .NET 10, and touching
+                     it from code would force a NoWarn suppression for no extra benefit. -->
+                <ResourceDictionary Source="pack://application:,,,/PresentationFramework.Fluent;component/Themes/Fluent.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>
