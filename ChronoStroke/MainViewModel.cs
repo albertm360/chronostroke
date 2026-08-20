@@ -286,7 +286,7 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    private static string? ValidateInterval(string? text, out int value)
+    internal static string? ValidateInterval(string? text, out int value)
     {
         value = 0;
 

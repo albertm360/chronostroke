@@ -33,3 +33,6 @@ jobs:
       # in CI is a warning nobody will read, and the count only ever grows.
       - name: Build
         run: dotnet build --configuration Release -warnaserror
+
+      - name: Test
+        run: dotnet test --configuration Release --no-build
