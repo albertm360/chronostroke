@@ -143,13 +143,3 @@ ChronoStroke/
 ```
 
 The only NuGet dependency is [CommunityToolkit.Mvvm](https://github.com/CommunityToolkit/dotnet).
-
-## Contributing
-
-Issues and pull requests are welcome. `dotnet build` should be clean with no warnings before a
-pull request is opened.
-
-## License
-
-No license has been chosen yet, which under copyright means all rights are reserved and others
-may not reuse the code. If you want this to be usable by anyone else, add a `LICENSE` file.
