@@ -23,8 +23,8 @@ jobs:
 
     steps:
       # Actions are pinned to commit SHAs rather than tags. A tag can be moved
-      # to point at different code after the fact; a SHA cannot. Dependabot is
-      # enabled on this repo and will raise PRs to bump them.
+      # to point at different code after the fact; a SHA cannot. The bumps come
+      # from Dependabot, configured in .github/dependabot.yml.
       - name: Check out the tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -33,13 +33,26 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
-      - name: Build
-        run: dotnet build --configuration Release
-
       - name: Publish single-file executable
         # RuntimeIdentifier, self-contained and single-file all live in the
-        # csproj, so the bare command produces the shippable artifact.
-        run: dotnet publish --configuration Release
+        # csproj, so the command only has to supply the version. That comes from
+        # the tag: the csproj's <Version> is a development placeholder, and
+        # without this the shipped exe reports it no matter what was tagged.
+        #
+        # There is no separate build step. Publish compiles anyway, so building
+        # first only doubled the work — and did it without the version, which is
+        # how the two drifted apart in the first place.
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ($env:TAG -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$') {
+              throw "Tag '$($env:TAG)' is not v<major>.<minor>.<patch>[-prerelease]"
+          }
+
+          $version = $env:TAG -replace '^v', ''
+          Write-Output "Building version $version"
+          dotnet publish --configuration Release -p:Version=$version -p:ContinuousIntegrationBuild=true
 
       - name: Stage the artifact and checksum it
         shell: pwsh

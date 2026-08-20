@@ -69,6 +69,9 @@ Copy it anywhere and run it. To iterate on the code instead, `dotnet run --proje
 3. **Interval (ms)** — how long to wait between presses. Minimum 50, maximum 60000.
 4. Click **Start**, or press your hotkey from anywhere.
 
+A capture box records *every* key you press into it, `Tab` and `Space` included — that is what
+lets them be chosen. **Press `Esc` to leave a capture box** and carry on with the keyboard.
+
 Once running, switch to the target window and the keystrokes follow your focus. Press the hotkey
 again to stop.
 
@@ -124,6 +127,11 @@ The interesting parts, for anyone reading the source:
 - **Some keys cannot be captured.** Windows claims `Win`-key combinations below the application
   layer, so they never reach the capture field. `F12` is rejected as a hotkey because it is
   reserved by the debugger at all times.
+- **Killing the process can leave a key held.** The clean-shutdown guarantee above covers every
+  way of *closing* ChronoStroke, including an unexpected error, because each of those unwinds the
+  loop past its key-up first. It cannot cover the process being killed outright — End Task, a
+  power cut — because Windows does not release injected keys when a process dies. If that happens,
+  tap the key in question once to clear it.
 
 > **Using this with games:** many games and online services prohibit input automation in their
 > terms of service. Check the rules of anything you point this at — that is on you, not on the
@@ -143,6 +151,12 @@ ChronoStroke/
 ├── KeyCombo.cs               A key plus its modifiers
 ├── AppSettings.cs            Persisted shape
 └── SettingsStore.cs          Atomic load/save under %AppData%
+
+ChronoStroke.Tests/           Interop flag decisions, validation, settings shape
 ```
 
-The only NuGet dependency is [CommunityToolkit.Mvvm](https://github.com/CommunityToolkit/dotnet).
+The application's only NuGet dependency is
+[CommunityToolkit.Mvvm](https://github.com/CommunityToolkit/dotnet). The test project adds xUnit,
+and is never published.
+
+Run the tests with `dotnet test`.

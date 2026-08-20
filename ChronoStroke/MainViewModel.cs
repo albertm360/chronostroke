@@ -1,12 +1,12 @@
 using System.Globalization;
-using System.Windows;
+using System.Windows.Threading;
 using ChronoStroke.Interop;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
 namespace ChronoStroke;
 
-public partial class MainViewModel : ObservableObject
+internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 {
     /// <summary>
     /// Guard rail. Below this the machine is flooded with input faster than most windows can
@@ -18,6 +18,13 @@ public partial class MainViewModel : ObservableObject
 
     private readonly RepeatEngine _engine = new();
 
+    /// <summary>
+    /// The dispatcher of the thread that built this view model — the UI thread. Captured rather
+    /// than reached for through Application.Current so the view model does not depend on a
+    /// running WPF application to marshal its own events.
+    /// </summary>
+    private readonly Dispatcher _dispatcher = Dispatcher.CurrentDispatcher;
+
     private GlobalHotKey? _hotKey;
 
     /// <summary>Last combination that registered successfully — the target to revert to.</summary>
@@ -27,6 +34,15 @@ public partial class MainViewModel : ObservableObject
     private bool _applyingHotkey;
 
     private string? _hotkeyRegistrationError;
+
+    /// <summary>Last interval the box held that parsed and passed the guard rails.</summary>
+    private int _lastValidIntervalMs = AppSettings.Default.IntervalMs;
+
+    /// <summary>What is currently on disk, so an unchanged configuration is not rewritten.</summary>
+    private AppSettings? _lastSaved;
+
+    /// <summary>Suppresses saving while settings are being applied from disk.</summary>
+    private bool _loading;
 
     /// <summary>Shortest gap between two accepted hotkey toggles.</summary>
     private const int HotkeyDebounceMs = 250;
@@ -45,25 +61,31 @@ public partial class MainViewModel : ObservableObject
         ApplySettings(SettingsStore.Load());
     }
 
-    private static void OnUiThread(Action action)
+    private void OnUiThread(Action action)
     {
-        var dispatcher = Application.Current?.Dispatcher;
-        if (dispatcher is null)
+        // Engine events arrive on thread-pool threads and have to be marshalled. Anything
+        // already on the right thread runs inline instead of queueing behind the current
+        // message, which keeps the ordering obvious.
+        if (_dispatcher.CheckAccess())
         {
-            action();       // no WPF app running (tests)
+            action();
             return;
         }
 
-        dispatcher.InvokeAsync(action);
+        // InvokeAsync on a dispatcher that has already shut down abandons the operation quietly
+        // rather than throwing — which is the behaviour we want during teardown.
+        _dispatcher.InvokeAsync(action);
     }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HotkeyError), nameof(HasHotkeyError))]
+    [NotifyPropertyChangedFor(nameof(HotkeyWarning), nameof(HasHotkeyWarning))]
     [NotifyCanExecuteChangedFor(nameof(StartCommand))]
     public partial KeyCombo SendCombo { get; set; }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HotkeyError), nameof(HasHotkeyError))]
+    [NotifyPropertyChangedFor(nameof(HotkeyWarning), nameof(HasHotkeyWarning))]
     [NotifyCanExecuteChangedFor(nameof(StartCommand))]
     public partial KeyCombo HotkeyCombo { get; set; }
 
@@ -71,9 +93,6 @@ public partial class MainViewModel : ObservableObject
     [NotifyPropertyChangedFor(nameof(IntervalError), nameof(HasIntervalError))]
     [NotifyCanExecuteChangedFor(nameof(StartCommand))]
     public partial string IntervalText { get; set; } = "250";
-
-    /// <summary>Suppresses saving while settings are being applied from disk.</summary>
-    private bool _loading;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanEdit))]
@@ -105,6 +124,24 @@ public partial class MainViewModel : ObservableObject
 
     public bool HasHotkeyError => HotkeyError is not null;
 
+    /// <summary>
+    /// Advisory, not blocking. The two combinations differ, so nothing is wrong yet — but they
+    /// share a virtual key, and the modifiers are the only thing keeping them apart. Send F8
+    /// with Ctrl+F8 as the hotkey and the configuration works exactly as intended until the
+    /// moment the user happens to hold Ctrl for something unrelated, at which point the loop's
+    /// own F8 becomes Ctrl+F8 and switches itself off. WaitForTriggerReleaseAsync covers the
+    /// start; nothing can cover the middle, so the honest answer is to say so up front.
+    /// </summary>
+    public string? HotkeyWarning =>
+        CollisionError is null && !SendCombo.IsEmpty && !HotkeyCombo.IsEmpty
+        && SendCombo.VirtualKey == HotkeyCombo.VirtualKey
+            ? $"{HotkeyCombo.DisplayName} and {SendCombo.DisplayName} are the same key with "
+              + "different modifiers. Holding a modifier while the loop runs can turn the "
+              + "repeated keystroke into the hotkey and stop it."
+            : null;
+
+    public bool HasHotkeyWarning => HotkeyWarning is not null;
+
     // ---------------------------------------------------------------- settings
 
     private void ApplySettings(AppSettings settings)
@@ -117,13 +154,17 @@ public partial class MainViewModel : ObservableObject
 
             // Clamp rather than trust. The file is plain text in a folder the user can open, so
             // a hand-edited 1 ms interval must not slip past the guard rail the UI enforces.
-            IntervalText = Math.Clamp(settings.IntervalMs, MinIntervalMs, MaxIntervalMs)
-                .ToString(CultureInfo.InvariantCulture);
+            _lastValidIntervalMs = Math.Clamp(settings.IntervalMs, MinIntervalMs, MaxIntervalMs);
+            IntervalText = _lastValidIntervalMs.ToString(CultureInfo.InvariantCulture);
         }
         finally
         {
             _loading = false;
         }
+
+        // What is now on screen, so the first edit is compared against it rather than written
+        // back unchanged.
+        _lastSaved = AppSettings.From(SendCombo, HotkeyCombo, _lastValidIntervalMs);
     }
 
     /// <summary>
@@ -137,23 +178,40 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        // Keep the last valid interval rather than writing a half-typed one; the text box
-        // updates on every keystroke, so "25" exists briefly on the way to "250".
-        if (ValidateInterval(IntervalText, out var interval) is not null)
+        var settings = AppSettings.From(SendCombo, HotkeyCombo, _lastValidIntervalMs);
+
+        // The interval box updates its binding on every keystroke, so typing "250" arrives here
+        // three times and half-typed values like "2" arrive as invalid ones. Comparing against
+        // what was last written collapses that to a single save once the value is usable, and
+        // skips the disk entirely while the user is still mid-number.
+        if (settings == _lastSaved)
         {
-            interval = SettingsStore.Load().IntervalMs;
+            return;
         }
 
-        var error = SettingsStore.Save(AppSettings.From(SendCombo, HotkeyCombo, interval));
+        var error = SettingsStore.Save(settings);
         if (error is not null)
         {
             Status = error;
+            return;
         }
+
+        _lastSaved = settings;
     }
 
     partial void OnSendComboChanged(KeyCombo value) => SaveSettings();
 
-    partial void OnIntervalTextChanged(string value) => SaveSettings();
+    partial void OnIntervalTextChanged(string value)
+    {
+        // Half-typed values never become the saved interval; the last usable one stands until
+        // the box holds another.
+        if (ValidateInterval(value, out var interval) is null)
+        {
+            _lastValidIntervalMs = interval;
+        }
+
+        SaveSettings();
+    }
 
     // ------------------------------------------------------------------ hotkey
 
@@ -197,8 +255,24 @@ public partial class MainViewModel : ObservableObject
                 if (!_lastGoodHotkey.IsEmpty && _lastGoodHotkey != HotkeyCombo)
                 {
                     HotkeyCombo = _lastGoodHotkey;
-                    _hotKey.TryRegister(_lastGoodHotkey, out _);
+                    if (_hotKey.TryRegister(_lastGoodHotkey, out _))
+                    {
+                        // The box has just gone back to showing the old combination, so leaving
+                        // the error in place would park a permanent-looking complaint about
+                        // Ctrl+Shift+P directly beneath a box reading Ctrl+F8. The rejection is
+                        // still worth saying — once, in the status line, where messages are
+                        // understood to be about what just happened rather than about the
+                        // current state.
+                        _hotkeyRegistrationError = null;
+                        Status = error;
+                    }
                 }
+
+                // If there is nothing to roll back to — first launch with the default hotkey
+                // already taken — the app deliberately ends up with no hotkey registered at all.
+                // The box keeps showing the rejected combination and the error stays under it,
+                // which is the honest description of where things stand: nothing is listening,
+                // and the Start button is still there.
             }
         }
         finally
@@ -206,13 +280,13 @@ public partial class MainViewModel : ObservableObject
             _applyingHotkey = false;
             OnPropertyChanged(nameof(HotkeyError));
             OnPropertyChanged(nameof(HasHotkeyError));
+            OnPropertyChanged(nameof(HotkeyWarning));
+            OnPropertyChanged(nameof(HasHotkeyWarning));
             StartCommand.NotifyCanExecuteChanged();
         }
     }
 
-    public void ReleaseHotkey() => _hotKey?.Dispose();
-
-    private static string? ValidateInterval(string? text, out int value)
+    internal static string? ValidateInterval(string? text, out int value)
     {
         value = 0;
 
@@ -294,5 +368,22 @@ public partial class MainViewModel : ObservableObject
             : $"Running — {SendCombo.DisplayName} every {interval} ms. {HotkeyCombo.DisplayName} to stop.";
     }
 
-    public ValueTask DisposeEngineAsync() => _engine.DisposeAsync();
+    /// <summary>
+    /// Shuts the view model down in the one order that is safe, so no caller has to know it.
+    /// </summary>
+    /// <remarks>
+    /// The hotkey goes first: while it is registered, a WM_HOTKEY can still arrive and start the
+    /// engine, and the await below keeps the dispatcher pumping long enough for that to happen.
+    /// Stopping the engine second is what guarantees no key is left held down — it waits for the
+    /// loop to unwind past its key-up. Saving last means the file reflects the final state.
+    /// </remarks>
+    public async ValueTask DisposeAsync()
+    {
+        _hotKey?.Dispose();
+        _hotKey = null;
+
+        await _engine.DisposeAsync().ConfigureAwait(true);
+
+        SaveSettings();
+    }
 }

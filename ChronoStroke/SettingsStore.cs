@@ -1,4 +1,5 @@
 using System.IO;
+using System.Security;
 using System.Text.Json;
 
 namespace ChronoStroke;
@@ -6,7 +7,7 @@ namespace ChronoStroke;
 /// <summary>
 /// Reads and writes settings.json under %AppData%.
 /// </summary>
-public static class SettingsStore
+internal static class SettingsStore
 {
     public static string FilePath { get; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -33,8 +34,14 @@ public static class SettingsStore
             return JsonSerializer.Deserialize(json, AppSettingsContext.Default.AppSettings)
                    ?? AppSettings.Default;
         }
+        // The filter is deliberately wider than the happy path suggests. Path APIs throw
+        // NotSupportedException and SecurityException on paths this app would never build itself
+        // but a redirected profile folder can produce, and System.Text.Json adds
+        // NotSupportedException for a type it cannot read. Anything escaping here is an
+        // exception on the way to the window's constructor, which means no window.
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
-                                       or JsonException or ArgumentException)
+                                       or JsonException or ArgumentException
+                                       or NotSupportedException or SecurityException)
         {
             return AppSettings.Default;
         }
@@ -55,7 +62,14 @@ public static class SettingsStore
             File.Move(temp, FilePath, overwrite: true);
             return null;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        // Save runs from a property-changed handler, which runs from a binding setter, which
+        // runs on the dispatcher — so anything not caught here surfaces as an unhandled
+        // dispatcher exception and takes the app down over a settings write. CreateDirectory
+        // contributes NotSupportedException and ArgumentException, and File.Move contributes
+        // SecurityException, none of which the previous filter covered.
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                       or NotSupportedException or ArgumentException
+                                       or SecurityException)
         {
             return $"Could not save settings: {ex.Message}";
         }

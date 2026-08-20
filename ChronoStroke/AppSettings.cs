@@ -7,7 +7,7 @@ namespace ChronoStroke;
 /// What gets written to settings.json. Deliberately a flat record of primitives rather than the
 /// live types — the file is a wire format and should not follow refactors of the UI model.
 /// </summary>
-public sealed record AppSettings
+internal sealed record AppSettings
 {
     public ushort SendVirtualKey { get; init; }
 

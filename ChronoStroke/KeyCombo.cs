@@ -11,7 +11,7 @@ namespace ChronoStroke;
 /// app, the capture UI hands us that type directly, and it maps cleanly onto both the virtual
 /// keys SendInput wants and the MOD_* flags RegisterHotKey wants.
 /// </remarks>
-public readonly record struct KeyCombo(ushort VirtualKey, ModifierKeys Modifiers)
+internal readonly record struct KeyCombo(ushort VirtualKey, ModifierKeys Modifiers)
 {
     public bool IsEmpty => VirtualKey == 0;
 
@@ -50,7 +50,9 @@ public readonly record struct KeyCombo(ushort VirtualKey, ModifierKeys Modifiers
         if (!isNumpad)
         {
             var mapped = NativeMethods.MapVirtualKeyW(vk, NativeMethods.MAPVK_VK_TO_CHAR);
-            var ch = (char)(mapped & 0x7FFF);   // top bit flags a dead key
+            // The dead-key flag is bit 31 of the DWORD, not the top bit of the character, so
+            // the character is the low 16 bits. Masking to 0x7FFF truncated it to 15.
+            var ch = (char)(mapped & 0xFFFF);
             if (ch != '\0' && !char.IsControl(ch) && !char.IsWhiteSpace(ch))
             {
                 return char.ToUpperInvariant(ch).ToString();

@@ -1,4 +1,5 @@
 <Window x:Class="ChronoStroke.MainWindow"
+        x:ClassModifier="internal"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
@@ -7,7 +8,8 @@
         mc:Ignorable="d"
         d:DataContext="{d:DesignInstance Type=local:MainViewModel}"
         Title="ChronoStroke"
-        Width="420" Height="530"
+        Width="420"
+        SizeToContent="Height"
         ResizeMode="CanMinimize"
         WindowStartupLocation="CenterScreen">
 
@@ -23,13 +25,15 @@
 
         <StackPanel Grid.Row="2" Margin="0,24,0,0">
 
-            <TextBlock Text="Key to send" Margin="0,0,0,6" />
-            <local:KeyCaptureBox Combo="{Binding SendCombo}" IsEnabled="{Binding CanEdit}" />
+            <TextBlock x:Name="SendLabel" Text="Key to send" Margin="0,0,0,6" />
+            <local:KeyCaptureBox Combo="{Binding SendCombo}" IsEnabled="{Binding CanEdit}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=SendLabel}" />
             <TextBlock Margin="0,6,0,0" Opacity="0.6" FontSize="12" TextWrapping="Wrap"
-                       Text="Click the box, then press the key or combination you want repeated." />
+                       Text="Click the box, then press the key or combination you want repeated. Esc leaves the box." />
 
-            <TextBlock Text="Start / stop hotkey" Margin="0,18,0,6" />
-            <local:KeyCaptureBox Combo="{Binding HotkeyCombo}" IsEnabled="{Binding CanEdit}" />
+            <TextBlock x:Name="HotkeyLabel" Text="Start / stop hotkey" Margin="0,18,0,6" />
+            <local:KeyCaptureBox Combo="{Binding HotkeyCombo}" IsEnabled="{Binding CanEdit}"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=HotkeyLabel}" />
             <TextBlock Margin="0,6,0,0"
                        FontSize="12"
                        TextWrapping="Wrap"
@@ -37,9 +41,19 @@
                        Text="{Binding HotkeyError}"
                        Visibility="{Binding HasHotkeyError, Converter={StaticResource BoolToVis}}" />
 
-            <TextBlock Text="Interval (ms)" Margin="0,18,0,6" />
+            <!-- Advisory rather than an error: the configuration is legal and will run. Caution
+                 colour keeps it visually distinct from the blocking messages above. -->
+            <TextBlock Margin="0,6,0,0"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       Foreground="{DynamicResource SystemFillColorCautionBrush}"
+                       Text="{Binding HotkeyWarning}"
+                       Visibility="{Binding HasHotkeyWarning, Converter={StaticResource BoolToVis}}" />
+
+            <TextBlock x:Name="IntervalLabel" Text="Interval (ms)" Margin="0,18,0,6" />
             <TextBox Text="{Binding IntervalText, UpdateSourceTrigger=PropertyChanged}"
-                     IsEnabled="{Binding CanEdit}" />
+                     IsEnabled="{Binding CanEdit}"
+                     AutomationProperties.LabeledBy="{Binding ElementName=IntervalLabel}" />
             <TextBlock Margin="0,6,0,0"
                        FontSize="12"
                        TextWrapping="Wrap"
@@ -59,9 +73,14 @@
             </StackPanel>
         </StackPanel>
 
+        <!-- LiveSetting makes a screen reader announce status changes as they happen. Without
+             it the line is readable only if the user goes looking for it, which defeats the
+             point of a line whose whole job is to report what just happened. -->
         <TextBlock Grid.Row="3"
+                   Margin="0,24,0,0"
                    Text="{Binding Status}"
                    TextWrapping="Wrap"
-                   Opacity="0.7" />
+                   Opacity="0.7"
+                   AutomationProperties.LiveSetting="Polite" />
     </Grid>
 </Window>

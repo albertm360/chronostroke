@@ -9,7 +9,7 @@ namespace ChronoStroke;
 /// Start and Stop are expected to be called from the UI thread only (a button, or the WM_HOTKEY
 /// hook, which is delivered on the UI thread). The loop itself runs on the thread pool.
 /// </remarks>
-public sealed class RepeatEngine : IAsyncDisposable
+internal sealed class RepeatEngine : IAsyncDisposable
 {
     /// <summary>Target key-down duration. Trimmed if the interval is too short to fit it.</summary>
     private const int HoldMilliseconds = 40;
@@ -47,8 +47,14 @@ public sealed class RepeatEngine : IAsyncDisposable
             return;
         }
 
+        // Resolve the scan codes here rather than in the loop. Start runs on the UI thread,
+        // which owns the keyboard layout the user captured the key on; the loop does not.
+        // See KeystrokeSender.BuildBatch for why that distinction bites.
+        var down = KeystrokeSender.BuildBatch(combo, keyUp: false);
+        var up = KeystrokeSender.BuildBatch(combo, keyUp: true);
+
         _cts = new CancellationTokenSource();
-        _loop = Task.Run(() => RunAsync(combo, intervalMs, triggerCombo, _cts.Token));
+        _loop = Task.Run(() => RunAsync(down, up, intervalMs, triggerCombo, _cts.Token));
     }
 
     public async Task StopAsync()
@@ -63,19 +69,37 @@ public sealed class RepeatEngine : IAsyncDisposable
             return;
         }
 
-        await cts.CancelAsync();
-
-        if (loop is not null)
+        try
         {
-            // The loop swallows its own cancellation, so this is just waiting for it to unwind
-            // — importantly, past the finally block that releases the key.
-            await loop.ConfigureAwait(false);
-        }
+            await cts.CancelAsync().ConfigureAwait(false);
 
-        cts.Dispose();
+            if (loop is not null)
+            {
+                // The loop swallows its own cancellation, so this is just waiting for it to
+                // unwind — importantly, past the finally block that releases the key.
+                await loop.ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Already stopping; nothing left to cancel.
+        }
+        finally
+        {
+            // Unconditional. _cts and _loop are already cleared above, so an exception escaping
+            // from here would leak this CancellationTokenSource and leave the engine reporting
+            // IsRunning == false without anything having been cleanly stopped — after which
+            // Start would appear to work but the old loop would never have been joined.
+            cts.Dispose();
+        }
     }
 
-    private async Task RunAsync(KeyCombo combo, int intervalMs, KeyCombo triggerCombo, CancellationToken ct)
+    private async Task RunAsync(
+        NativeMethods.INPUT[] down,
+        NativeMethods.INPUT[] up,
+        int intervalMs,
+        KeyCombo triggerCombo,
+        CancellationToken ct)
     {
         // Never let the hold swallow the whole interval; at the 50 ms floor this gives 25 ms
         // down, 25 ms up rather than a key that is held permanently.
@@ -89,13 +113,15 @@ public sealed class RepeatEngine : IAsyncDisposable
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(intervalMs));
             while (true)
             {
-                var down = KeystrokeSender.Press(combo);
+                var pressed = KeystrokeSender.Send(down);
                 await Task.Delay(hold, ct).ConfigureAwait(false);
-                var up = KeystrokeSender.Release(combo);
+                var released = KeystrokeSender.Send(up);
 
                 // Report a failure once rather than once per tick — a broken send fails every
                 // time, and 20 identical messages a second is noise, not information.
-                var failure = !down.Success ? down.Describe() : !up.Success ? up.Describe() : null;
+                var failure = !pressed.Success ? pressed.Describe()
+                    : !released.Success ? released.Describe()
+                    : null;
                 if (failure is not null && failure != lastReportedFailure)
                 {
                     lastReportedFailure = failure;
@@ -116,13 +142,20 @@ public sealed class RepeatEngine : IAsyncDisposable
         {
             // Expected on Stop.
         }
+        catch (Exception ex)
+        {
+            // Anything else would otherwise fault the loop task and surface later, out of
+            // context, when StopAsync awaits it. Report it in the status line instead and let
+            // the finally block below release the key.
+            SendFailed?.Invoke(this, $"The repeat loop stopped unexpectedly: {ex.Message}");
+        }
         finally
         {
             // Unconditional. If cancellation landed between Press and Release the key is still
             // physically down as far as the target window is concerned, and leaving it that way
             // means a game holding an action forever. A key-up for a key that was never down is
             // harmless, so this is safe to send even on the paths that did not press anything.
-            KeystrokeSender.Release(combo);
+            KeystrokeSender.Send(up);
         }
     }
 

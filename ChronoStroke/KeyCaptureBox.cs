@@ -7,7 +7,7 @@ namespace ChronoStroke;
 /// <summary>
 /// A read-only text box that records the next key combination pressed into it.
 /// </summary>
-public class KeyCaptureBox : TextBox
+internal sealed class KeyCaptureBox : TextBox
 {
     static KeyCaptureBox()
     {
@@ -67,9 +67,25 @@ public class KeyCaptureBox : TextBox
         // activate buttons, and none of those keys could ever be captured.
         e.Handled = true;
 
+        // Marked handled first, then passed on: an external handler watching this box should see
+        // the key and see that it has been claimed. Skipping base suppresses the routed event
+        // entirely, which is a different thing from capturing it.
+        base.OnPreviewKeyDown(e);
+
         // WPF reports Key.System for any key pressed while Alt is held — the actual key is
         // parked in SystemKey. Reading e.Key alone would capture "System" for every Alt combo.
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
+
+        // Swallowing Tab along with everything else means a keyboard-only user who tabs into
+        // this box can never tab out of it — no Start button, no other field, no way back
+        // without a mouse. One key has to stay reserved as the exit. Escape is the conventional
+        // choice and costs the least: Windows and most games claim it, so it makes a poor
+        // hotkey and a poor key to repeat. Held with a modifier it is still capturable.
+        if (key == Key.Escape && Keyboard.Modifiers == ModifierKeys.None)
+        {
+            MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+            return;
+        }
 
         // Ignore a modifier pressed on its own, so building up Ctrl+Shift+E by holding Ctrl,
         // then Shift, then tapping E captures the whole thing rather than committing on Ctrl.

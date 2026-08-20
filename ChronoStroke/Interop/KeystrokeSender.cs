@@ -18,17 +18,26 @@ internal readonly record struct SendOutcome(int Expected, uint Inserted, int Las
 /// </summary>
 internal static class KeystrokeSender
 {
-    /// <summary>Presses the modifiers then the key, in one atomic batch.</summary>
-    public static SendOutcome Press(KeyCombo combo) => Send(combo, keyUp: false);
-
-    /// <summary>Releases the key then the modifiers — reverse order, one atomic batch.</summary>
-    public static SendOutcome Release(KeyCombo combo) => Send(combo, keyUp: true);
-
-    private static SendOutcome Send(KeyCombo combo, bool keyUp)
+    /// <summary>
+    /// Builds the batch for one combination: <paramref name="keyUp"/> false presses the
+    /// modifiers then the key, true releases them in reverse.
+    /// </summary>
+    /// <remarks>
+    /// Call this from the UI thread and reuse the result. MapVirtualKeyW below resolves against
+    /// the *calling thread's* active keyboard layout (GetKeyboardLayout(0)), and the repeat loop
+    /// runs on the thread pool, where that is the process default rather than the layout the
+    /// user was on when they captured the key. On a QWERTY-family layout the two tables agree,
+    /// so the difference is invisible until someone on AZERTY or Dvorak runs the app and gets
+    /// the wrong key — the worst kind of bug to diagnose after the fact.
+    /// Building once also keeps the loop free of P/Invokes and allocations: the combination is
+    /// fixed for the whole run, but resolving per tick meant up to ten MapVirtualKeyW calls and
+    /// two arrays every time, forty times a second at the 50 ms floor.
+    /// </remarks>
+    public static NativeMethods.INPUT[] BuildBatch(KeyCombo combo, bool keyUp)
     {
         if (combo.IsEmpty)
         {
-            return new SendOutcome(0, 0, 0);
+            return [];
         }
 
         // Press order is modifiers-then-key, which is what physically happens when you hold
@@ -50,12 +59,26 @@ internal static class KeystrokeSender
             inputs[i] = BuildKeyEvent(vk, keyUp);
         }
 
+        return inputs;
+    }
+
+    /// <summary>
+    /// Sends a batch built by <see cref="BuildBatch"/>. Safe to call from any thread — every
+    /// layout-sensitive decision was already made when the batch was built.
+    /// </summary>
+    public static SendOutcome Send(NativeMethods.INPUT[] batch)
+    {
+        if (batch.Length == 0)
+        {
+            return new SendOutcome(0, 0, 0);
+        }
+
         // One call for the whole batch. The docs guarantee events from a single SendInput call
         // are inserted serially and are NOT interleaved with real keyboard input or with other
         // SendInput calls — so a combo can never be torn apart halfway through.
-        var inserted = NativeMethods.SendInput((uint)count, ref inputs[0], NativeMethods.InputSize);
-        var error = inserted == count ? 0 : Marshal.GetLastWin32Error();
-        return new SendOutcome(count, inserted, error);
+        var inserted = NativeMethods.SendInput((uint)batch.Length, ref batch[0], NativeMethods.InputSize);
+        var error = inserted == batch.Length ? 0 : Marshal.GetLastWin32Error();
+        return new SendOutcome(batch.Length, inserted, error);
     }
 
     private static NativeMethods.INPUT BuildKeyEvent(ushort virtualKey, bool keyUp) =>
@@ -133,11 +156,14 @@ internal static class KeystrokeSender
     ///   Home 0x47 = Numpad7      Up    0x48 = Numpad8     PageUp   0x49 = Numpad9
     ///   Left 0x4B = Numpad4      Right 0x4D = Numpad6     End      0x4F = Numpad1
     ///   Down 0x50 = Numpad2      PgDn  0x51 = Numpad3     Insert   0x52 = Numpad0
-    ///   Delete 0x53 = Decimal    NumLock 0x45 = Pause
+    ///   Delete 0x53 = Decimal
     /// </code>
     /// Omit the flag and picking "Left Arrow" silently sends Numpad 4.
-    /// MapVirtualKeyW DOES report the prefix for Right Ctrl/Alt, Win, Apps and numpad divide,
-    /// so those are deliberately absent here — the 0xE0 check above already catches them.
+    /// MapVirtualKeyW DOES report the prefix for Right Ctrl/Alt, Win, Apps, numpad divide and
+    /// the browser/media keys, so those are deliberately absent here — the 0xE0 check above
+    /// already catches them, and adding them would double-flag nothing but confusion.
+    /// Num Lock does not belong here either: it maps to a bare 0x45 and nothing else claims
+    /// that code (Pause is 0xE11D, which takes the virtual-key fallback above).
     /// </remarks>
     private static bool IsAlwaysExtended(ushort vk) => vk switch
     {
@@ -145,7 +171,6 @@ internal static class KeystrokeSender
         0x23 or 0x24 => true,                     // End / Home
         0x25 or 0x26 or 0x27 or 0x28 => true,     // Left / Up / Right / Down
         0x2D or 0x2E => true,                     // Insert / Delete
-        0x90 => true,                             // Num Lock
         _ => false,
     };
 }
