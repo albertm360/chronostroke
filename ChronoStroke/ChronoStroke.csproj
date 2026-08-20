@@ -24,8 +24,9 @@
     <Copyright>Copyright © 2026 Albert Morlà</Copyright>
     <ApplicationIcon>ChronoStroke.ico</ApplicationIcon>
     <!-- Development placeholder only. Released builds are stamped from the git tag by
-         .github/workflows/release.yml, which passes -p:Version explicitly. -->
-    <Version>1.0.0</Version>
+         .github/workflows/release.yml, which passes -p:Version explicitly. Kept in step with the
+         most recent release so a local build is not wildly misleading. -->
+    <Version>1.1.0</Version>
   </PropertyGroup>
 
   <PropertyGroup>
