@@ -23,8 +23,8 @@ jobs:
 
     steps:
       # Actions are pinned to commit SHAs rather than tags. A tag can be moved
-      # to point at different code after the fact; a SHA cannot. Dependabot is
-      # enabled on this repo and will raise PRs to bump them.
+      # to point at different code after the fact; a SHA cannot. The bumps come
+      # from Dependabot, configured in .github/dependabot.yml.
       - name: Check out the tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
