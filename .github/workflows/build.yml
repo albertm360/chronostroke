@@ -1,0 +1,35 @@
+name: Build
+
+# Validates every push and pull request on the long-lived branches. Without this
+# nothing checks that main compiles until someone cuts a release, at which point
+# the release is the thing that fails.
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      # Pinned to commit SHAs for the same reason as release.yml: a tag can be
+      # moved to point at different code after the fact, a SHA cannot.
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "10.0.x"
+
+      # -warnaserror because the project builds clean today. A warning arriving
+      # in CI is a warning nobody will read, and the count only ever grows.
+      - name: Build
+        run: dotnet build --configuration Release -warnaserror
