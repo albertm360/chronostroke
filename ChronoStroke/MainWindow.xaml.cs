@@ -51,26 +51,34 @@ public partial class MainWindow : Window
 
     protected override async void OnClosing(CancelEventArgs e)
     {
-        base.OnClosing(e);
-
         if (_shutdownComplete)
         {
+            // Second pass. base.OnClosing raises the public Closing event, so it must run once
+            // per close, not once per pass through this method.
+            base.OnClosing(e);
             return;
         }
+
+        base.OnClosing(e);
 
         // Stopping the engine is async — it waits for the loop to unwind past the key-up that
         // guarantees nothing is left held down. Closing cannot be awaited, so cancel this close,
         // do the cleanup, then close again for real.
         e.Cancel = true;
 
-        await _viewModel.DisposeEngineAsync();
-        _viewModel.ReleaseHotkey();
-        _viewModel.SaveSettings();
-
+        // Order matters. Awaiting below keeps pumping the dispatcher, so anything still able to
+        // reach the view model can start the engine back up during teardown and leave a key held
+        // down as the process exits. Make the window inert first, then tear down.
+        //
         // Only remove our hook. The HwndSource itself belongs to the window — disposing it here
         // would tear down the HWND out from under WPF mid-shutdown.
         _source?.RemoveHook(WndProc);
         _source = null;
+        _viewModel.ReleaseHotkey();
+        IsEnabled = false;              // no more Start button either
+
+        await _viewModel.DisposeEngineAsync();
+        _viewModel.SaveSettings();
 
         _shutdownComplete = true;
         Close();
