@@ -9,6 +9,9 @@ window currently has focus, at an interval you choose, started and stopped with 
 
 Single window, no background service, no telemetry, no network access of any kind.
 
+<img src="docs/screenshot.png" width="406"
+     alt="The ChronoStroke window in dark mode: a Key to send field showing X, a Start / stop hotkey field showing Ctrl+F8, an Interval field showing 300 milliseconds, and Start and Stop buttons.">
+
 ## Why this exists
 
 Sending synthetic keystrokes on Windows is easy to get *almost* right. `SendKeys.Send` and
