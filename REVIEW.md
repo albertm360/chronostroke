@@ -1,0 +1,736 @@
+# ChronoStroke — Architecture & Code Quality Review
+
+Reviewed at commit `cda1fdc` (`main`), 2026-08-20. Scope: the whole repository — `ChronoStroke.slnx`,
+the single `ChronoStroke` project, `.github/workflows/release.yml`, `README.md`, `PLAN.md`, `CLAUDE.md`.
+
+Severity is calibrated to what this actually is: a single-window Windows utility with one NuGet
+dependency and no server component. Nothing below asks for a DI container, a logging framework, a
+settings library, or a third-party UI/input package — the one place where an extra dependency is
+genuinely arguable is raised as a question, not a recommendation.
+
+---
+
+## Executive summary
+
+ChronoStroke is a small, well-built WPF utility on `net10.0-windows` that injects scan-code
+keystrokes via hand-written `SendInput` interop and toggles with a `RegisterHotKey` global hotkey.
+For a codebase of ~900 lines it is unusually disciplined: the P/Invoke layer is correct where it
+matters most (the `INPUT`/`InputUnion` sizing that silently breaks most first attempts is right, the
+extended-key handling is right for 10 of 11 cases, and the `0xE1`/Pause fallback is exactly the
+right call), the repeat loop releases its key on every exit path including cancellation, and the
+comments explain *why* rather than *what*. The build is clean at zero warnings, the single
+dependency is current with no known vulnerabilities, and the README is better than most commercial
+software ships with.
+
+What is not yet production-grade is the **failure and shutdown story**. There is no unhandled
+exception handling anywhere in the application, `OnClosing` tears down in an order that leaves a
+live window during which the global hotkey can restart the engine mid-shutdown, and
+`RepeatEngine.StopAsync` wedges the engine and leaks its `CancellationTokenSource` if the loop ever
+faults. Because this app's worst failure mode is "a key is left held down in a game", those three
+interact badly. Below that tier there is one confirmed interop bug (Num Lock is flagged extended
+when it should not be), scan codes resolved on the wrong thread for keyboard-layout purposes,
+synchronous disk writes on the UI thread on every keystroke, a keyboard focus trap in
+`KeyCaptureBox`, and a release pipeline that ships every tag stamped `1.0.0`.
+
+Verdict: roughly 80% of the way to a genuinely top-tier utility. The remaining 20% is about eight
+focused changes, most of them under 20 lines each. None of them require restructuring anything.
+
+---
+
+## Findings
+
+### High
+
+---
+
+#### H1 — Shutdown ordering lets the hotkey restart the engine mid-teardown, which can leave a key held down
+
+**Files:** `ChronoStroke/MainWindow.xaml.cs:52-77`
+
+`OnClosing` cancels the close, then tears down in this order:
+
+```csharp
+e.Cancel = true;
+
+await _viewModel.DisposeEngineAsync();   // (1) async - pumps messages
+_viewModel.ReleaseHotkey();              // (2) hotkey is STILL LIVE during (1)
+_viewModel.SaveSettings();
+
+_source?.RemoveHook(WndProc);            // (3) hook is STILL LIVE during (1)
+```
+
+Line 66 is an `await` on the UI thread. The dispatcher keeps pumping while it runs, and both the
+hotkey registration and the `WndProc` hook are still in place. A `WM_HOTKEY` arriving in that window
+reaches `WndProc` (line 48), fires `_viewModel.ToggleAsync()`, sees `IsRunning == false` (the engine
+was just stopped), and **starts the engine again**. Control then returns to line 67, the hotkey is
+unregistered, `Close()` runs, and the process exits with the loop still running — potentially
+between its `Press` and `Release`, so the `finally` at `RepeatEngine.cs:119-126` never executes.
+
+The window is small (tens of milliseconds), but the app's headline guarantee is "no key left held
+down", and this is the one path that breaks it during a normal exit. The same hole exists via the
+still-enabled **Start** button, since the window remains interactive across the `await`.
+
+**Fix.** Make the window inert first, then tear down:
+
+```csharp
+e.Cancel = true;
+
+// Nothing can restart the engine after this point.
+_source?.RemoveHook(WndProc);
+_source = null;
+_viewModel.ReleaseHotkey();
+IsEnabled = false;                       // also kills the Start button
+
+await _viewModel.DisposeEngineAsync();
+_viewModel.SaveSettings();
+
+_shutdownComplete = true;
+Close();
+```
+
+Note that `base.OnClosing(e)` at line 54 also runs a second time on the `_shutdownComplete` path,
+raising the public `Closing` event twice. Move it below the early-return guard.
+
+---
+
+#### H2 — No unhandled-exception handling anywhere in the application
+
+**Files:** `ChronoStroke/App.xaml.cs:10-12`, `ChronoStroke/MainWindow.xaml.cs:48,52`,
+`ChronoStroke/RepeatEngine.cs:115-118`
+
+`App` is an empty class. There is no `DispatcherUnhandledException` handler, no
+`AppDomain.CurrentDomain.UnhandledException` handler, and no `TaskScheduler.UnobservedTaskException`
+handler. Meanwhile the code has three separate places where an exception escapes into nothing:
+
+1. `MainWindow.xaml.cs:48` — `_ = _viewModel.ToggleAsync();` is deliberately fire-and-forget. Any
+   exception inside (for example `SettingsStore.Save` throwing a type outside its filter — see L14)
+   is swallowed entirely and the app silently stops responding to the hotkey.
+2. `MainWindow.xaml.cs:52` — `async void OnClosing`. An exception here lands on the dispatcher with
+   no handler: the process dies mid-shutdown, *after* `e.Cancel = true` and possibly before the
+   engine has released its key.
+3. `RepeatEngine.cs:115` — `RunAsync` catches only `OperationCanceledException`. Anything else
+   faults the loop task; see H3 for what happens next.
+
+For a background service you would wire this into a logging stack. For a single-window utility the
+equivalent is about 15 lines and no new dependency:
+
+```csharp
+public partial class App : Application
+{
+    protected override void OnStartup(StartupEventArgs e)
+    {
+        base.OnStartup(e);
+
+        DispatcherUnhandledException += (_, args) =>
+        {
+            args.Handled = true;
+            MessageBox.Show(args.Exception.ToString(), "ChronoStroke stopped",
+                MessageBoxButton.OK, MessageBoxImage.Error);
+            Shutdown(1);            // exits via MainWindow.OnClosing, so the key is released
+        };
+
+        TaskScheduler.UnobservedTaskException += (_, args) => args.SetObserved();
+    }
+}
+```
+
+Separately, give `RepeatEngine.RunAsync` a catch-all so a loop failure surfaces in the status line
+instead of faulting the task:
+
+```csharp
+catch (OperationCanceledException) { /* expected on Stop */ }
+catch (Exception ex)
+{
+    SendFailed?.Invoke(this, $"The repeat loop stopped unexpectedly: {ex.Message}");
+}
+finally { KeystrokeSender.Release(combo); }
+```
+
+---
+
+#### H3 — `RepeatEngine.StopAsync` wedges the engine and leaks its CTS when the loop faults
+
+**Files:** `ChronoStroke/RepeatEngine.cs:54-76`
+
+```csharp
+_cts = null;
+_loop = null;
+await cts.CancelAsync();
+if (loop is not null)
+{
+    await loop.ConfigureAwait(false);   // rethrows if the loop faulted
+}
+cts.Dispose();                          // never reached on that path
+```
+
+If `RunAsync` ever faults (H2 makes this reachable), `await loop` rethrows on the caller's thread.
+By that point `_cts` and `_loop` have already been nulled, so:
+
+- the `CancellationTokenSource` is never disposed;
+- `IsRunning` reports `false` even though nothing was cleanly stopped;
+- the exception propagates out of `MainViewModel.StopAsync` into `AsyncRelayCommand`, which by
+  default rethrows onto the calling context — an unhandled exception in a button click.
+
+**Fix.** Wrap the await and dispose unconditionally, swallowing the loop's fault here (the catch-all
+from H2 has already reported it):
+
+```csharp
+try
+{
+    await cts.CancelAsync().ConfigureAwait(false);
+    if (loop is not null)
+    {
+        await loop.ConfigureAwait(false);
+    }
+}
+catch (OperationCanceledException) { }
+finally
+{
+    cts.Dispose();
+}
+```
+
+---
+
+### Medium
+
+---
+
+#### M1 — Num Lock is incorrectly flagged as an extended key (confirmed by probing `MapVirtualKeyW`)
+
+**Files:** `ChronoStroke/Interop/KeystrokeSender.cs:142-150` (specifically line 148)
+
+`IsAlwaysExtended` returns `true` for `0x90` (`VK_NUMLOCK`), and the XML remark justifies it with
+`NumLock 0x45 = Pause`. I probed `MapVirtualKeyW` on this machine to check the whole table:
+
+```
+VK_NUMLOCK  vk=0x90  MAPVK_VK_TO_VSC_EX = 0x0045
+VK_PAUSE    vk=0x13  MAPVK_VK_TO_VSC_EX = 0xE11D
+VK_SCROLL   vk=0x91  MAPVK_VK_TO_VSC_EX = 0x0046
+VK_CANCEL   vk=0x03  MAPVK_VK_TO_VSC_EX = 0xE046
+```
+
+The stated collision does not exist. `VK_PAUSE` comes back with an `0xE1` prefix and is already
+routed to the virtual-key fallback at `KeystrokeSender.cs:91`, so a bare `0x45` is unambiguously
+Num Lock. The physical Num Lock scan code is `0x45` with **no** `E0` prefix — the code currently
+emits `E0 45`, which is not a scan code Num Lock ever produces. Anything reading raw scan codes
+(that is, the exact class of application this project exists to serve) will see something other than
+Num Lock.
+
+The other ten entries in the list are all correct and confirmed: `Home`/`End`/arrows/`PgUp`/`PgDn`/
+`Insert`/`Delete` all return bare scan codes that genuinely collide with numpad keys, and Right
+Ctrl/Alt (`0xE01D`/`0xE038`), Win (`0xE05B`), Apps (`0xE05D`) and Divide (`0xE035`) do report the
+prefix, exactly as the remark claims.
+
+**Fix:** delete line 148 (`0x90 => true,`) and drop `NumLock 0x45 = Pause` from the remark table.
+
+While you are in there: browser and media keys (`0xA6`, `0xAD`, `0xAF`, `0xB3`, `0xB7`) all return
+`0xE0`-prefixed codes and are correctly handled by the existing prefix branch — worth a one-line
+note in the remark so nobody helpfully adds them to the list later.
+
+---
+
+#### M2 — Scan codes are resolved on a thread-pool thread, where the keyboard layout is not guaranteed to match
+
+**Files:** `ChronoStroke/RepeatEngine.cs:51,92,94`, `ChronoStroke/Interop/KeystrokeSender.cs:45,85`
+
+`MapVirtualKeyW` resolves against **the calling thread's** active input locale
+(`GetKeyboardLayout(0)`). The repeat loop runs under `Task.Run` (`RepeatEngine.cs:51`), so every
+`Press`/`Release` calls `MapVirtualKeyW` from a pool thread whose HKL is the process/system default,
+not necessarily the one the UI thread had when the user captured the key. This machine has two input
+methods installed (`0409:0000040A` and `0409:00000409`), so the divergence is reachable here, not
+hypothetical.
+
+For QWERTY-family layouts the VK-to-scan-code tables coincide, so this is latent rather than
+actively broken today — but it becomes a live bug the moment someone on an AZERTY or Dvorak layout
+uses the app, and it is a "why does it send the wrong key only sometimes" class of bug that is
+miserable to diagnose.
+
+There is a second, unrelated reason to make the same change: the combination is fixed for the whole
+run, yet the loop rebuilds it every tick — up to 10 `MapVirtualKeyW` P/Invokes and two `INPUT[]`
+heap allocations per tick (`KeystrokeSender.cs:45`), 40 times a second at the 50 ms floor.
+
+**Fix.** Resolve both batches once, on the UI thread, in `Start`, and hand the arrays to the loop:
+
+```csharp
+// RepeatEngine.Start - runs on the UI thread, which owns the correct layout.
+public void Start(KeyCombo combo, int intervalMs, KeyCombo triggerCombo = default)
+{
+    if (IsRunning || combo.IsEmpty) return;
+
+    var down = KeystrokeSender.BuildBatch(combo, keyUp: false);   // INPUT[]
+    var up   = KeystrokeSender.BuildBatch(combo, keyUp: true);
+
+    _cts = new CancellationTokenSource();
+    _loop = Task.Run(() => RunAsync(down, up, combo, intervalMs, triggerCombo, _cts.Token));
+}
+```
+
+Keep `combo` around for the `finally`-block release. This also makes `BuildBatch` directly
+unit-testable without injecting anything, which is what the `internal` on `BuildKeyEventData`
+(`KeystrokeSender.cs:68-72`) was already reaching for.
+
+---
+
+#### M3 — Synchronous disk I/O on the UI thread on every keystroke, including a full file read per invalid one
+
+**Files:** `ChronoStroke/MainViewModel.cs:133-156`, `ChronoStroke/MainWindow.xaml:41`
+
+The interval `TextBox` binds with `UpdateSourceTrigger=PropertyChanged`, so `OnIntervalTextChanged`
+(`MainViewModel.cs:156`) fires `SaveSettings()` on every character. Typing `250` performs three
+write-temp-plus-`File.Move` cycles. Worse, on the intermediate invalid values (`2`, `25`)
+`SaveSettings` takes this path:
+
+```csharp
+if (ValidateInterval(IntervalText, out var interval) is not null)
+{
+    interval = SettingsStore.Load().IntervalMs;   // full synchronous read, on the UI thread
+}
+```
+
+so each invalid keystroke does a `File.ReadAllText` plus a JSON deserialize *and* a write. The value
+it reads back is also unclamped, so a hand-edited `settings.json` containing `"IntervalMs": 1` gets
+faithfully rewritten by this path even though `ApplySettings` (line 120) clamps it on load.
+
+**Fix.** Cache the last valid interval instead of round-tripping the file:
+
+```csharp
+private int _lastValidIntervalMs = AppSettings.Default.IntervalMs;
+
+partial void OnIntervalTextChanged(string value)
+{
+    if (ValidateInterval(value, out var ms) is null) _lastValidIntervalMs = ms;
+    SaveSettings();
+}
+// ...and in SaveSettings, use _lastValidIntervalMs directly.
+```
+
+Then either switch the binding to `UpdateSourceTrigger=LostFocus` or leave it eager and skip the
+write when nothing actually changed. Removing the reads is the part that matters.
+
+---
+
+#### M4 — `MainViewModel` owns two disposables but is not disposable; teardown order is the window's problem
+
+**Files:** `ChronoStroke/MainViewModel.cs:19,21,213,297`, `ChronoStroke/MainWindow.xaml.cs:66-68`
+
+Confirmed by the analyzers. Building with `-p:AnalysisMode=Recommended` produces exactly one warning:
+
+```
+MainViewModel.cs(9,22): warning CA1001: Type 'MainViewModel' owns disposable field(s)
+'_engine', '_hotKey' but is not disposable
+```
+
+Instead the view model exposes two loosely-named lifecycle methods — `ReleaseHotkey()` and
+`DisposeEngineAsync()` — and relies on `MainWindow` calling both, in the right order. H1 is exactly
+the bug that arrangement invites.
+
+**Fix.** Implement `IAsyncDisposable` on `MainViewModel` and encode the correct order once, inside it:
+
+```csharp
+public async ValueTask DisposeAsync()
+{
+    _hotKey?.Dispose();          // stop new toggles arriving first
+    _hotKey = null;
+    await _engine.DisposeAsync().ConfigureAwait(true);
+    SaveSettings();
+}
+```
+
+`MainWindow.OnClosing` then becomes `await _viewModel.DisposeAsync();` and cannot get the order
+wrong. This is a consolidation, not new machinery.
+
+---
+
+#### M5 — `KeyCaptureBox` is a keyboard focus trap
+
+**Files:** `ChronoStroke/KeyCaptureBox.cs:64-89`
+
+```csharp
+protected override void OnPreviewKeyDown(KeyEventArgs e)
+{
+    e.Handled = true;      // unconditional, and base is never called
+    ...
+}
+```
+
+Swallowing everything is the right instinct — Tab and Space must be capturable — but there is no
+escape hatch. Once focus lands in a capture box, a keyboard-only user cannot Tab out, cannot reach
+the Start/Stop buttons, and cannot leave the field at all without a mouse. Both capture boxes sit in
+the natural tab order, so this is reachable by pressing Tab from the window's initial focus.
+
+`base.OnPreviewKeyDown(e)` is also never invoked, which suppresses the routed event for any handler
+attached externally.
+
+**Fix.** Reserve one key as the exit. `Escape` is the conventional choice and is a poor hotkey anyway,
+since Windows and most games claim it:
+
+```csharp
+protected override void OnPreviewKeyDown(KeyEventArgs e)
+{
+    var key = e.Key == Key.System ? e.SystemKey : e.Key;
+
+    if (key == Key.Escape && Keyboard.Modifiers == ModifierKeys.None)
+    {
+        MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+        e.Handled = true;
+        return;
+    }
+
+    e.Handled = true;
+    base.OnPreviewKeyDown(e);
+    // ...existing capture logic
+}
+```
+
+Mention it in the box's helper text ("Esc to leave the field") and in the README's Usage section.
+
+---
+
+#### M6 — Every tagged release ships an executable stamped `1.0.0`
+
+**Files:** `ChronoStroke/ChronoStroke.csproj:18`, `.github/workflows/release.yml:36-42,71`
+
+The csproj hardcodes `<Version>1.0.0</Version>`. The release workflow derives `$version` from the
+tag at line 71 — but only to build the release *title*. Neither `dotnet build` (line 37) nor
+`dotnet publish` (line 42) is passed a version. Push `v1.2.0` and the shipped `ChronoStroke.exe`
+still reports `1.0.0` in its file properties and in any crash report, and nothing in the pipeline
+catches the drift.
+
+**Fix.** Derive the version in the publish step and drop the redundant `dotnet build` (publish
+rebuilds anyway):
+
+```yaml
+- name: Publish single-file executable
+  shell: pwsh
+  env:
+    TAG: ${{ github.ref_name }}
+  run: |
+    $version = $env:TAG -replace '^v', ''
+    dotnet publish --configuration Release -p:Version=$version -p:ContinuousIntegrationBuild=true
+```
+
+Optionally add a guard that fails the run if the tag does not match `v<major>.<minor>.<patch>`.
+
+---
+
+#### M7 — No CI on push or pull request, and the Dependabot the workflow references does not exist
+
+**Files:** `.github/workflows/release.yml:5-8,26-27`; missing `.github/dependabot.yml`
+
+`release.yml` is the only workflow and it triggers solely on `v*` tags. Nothing validates `main`. A
+commit that does not compile sits undetected until someone cuts a release, at which point the
+release itself is the thing that fails.
+
+The comment at lines 26-27 states:
+
+> Actions are pinned to commit SHAs rather than tags. [...] Dependabot is enabled on this repo and
+> will raise PRs to bump them.
+
+There is no `.github/dependabot.yml` in the repository. SHA-pinning without a bump mechanism means
+the pinned `actions/checkout` and `actions/setup-dotnet` quietly rot. (If Dependabot is enabled via
+the GitHub UI rather than a config file, the comment is accurate and only the `nuget` ecosystem
+config is missing — but the repo as checked out gives a reader no way to tell.)
+
+**Fix.** Add a `build.yml` running on `push`/`pull_request` to `main` that does
+`dotnet build -c Release -warnaserror`, and add `.github/dependabot.yml` covering both
+`github-actions` and `nuget`.
+
+---
+
+#### M8 — No tests, in a codebase that has already carved out the seams for them
+
+**Files:** `ChronoStroke/Interop/KeystrokeSender.cs:68-72`, `ChronoStroke/MainViewModel.cs:48-58`
+
+Two places explicitly anticipate a test project that does not exist:
+
+- `KeystrokeSender.BuildKeyEventData` is `internal` rather than `private`, with the comment *"so the
+  flag decisions below can be verified directly, without actually injecting input"*.
+- `MainViewModel.OnUiThread` has a dedicated branch commented `// no WPF app running (tests)`.
+
+The highest-value targets are all pure functions and need no WPF host: the extended-key table in
+`BuildKeyEventData` (M1 is precisely the bug a table-driven test would have caught),
+`ValidateInterval`, `KeyCombo.DisplayName` ordering, and an `AppSettings` serialize/deserialize/clamp
+round-trip through `SettingsStore`.
+
+**A question, not a recommendation.** `CLAUDE.md` permits only `CommunityToolkit.Mvvm`, and a test
+project needs `Microsoft.NET.Test.Sdk` plus a framework (xUnit or MSTest) — in a **separate**
+`ChronoStroke.Tests.csproj` that never ships in the published executable. Do you want that exception?
+If not, the two seams above are dead weight and the comments should be corrected so they stop
+implying coverage that isn't there.
+
+---
+
+#### M9 — A rejected hotkey leaves an error message pointing at a combination the UI no longer shows
+
+**Files:** `ChronoStroke/MainViewModel.cs:186-211`
+
+On a failed registration the code stores the failure message, then rolls `HotkeyCombo` back to
+`_lastGoodHotkey` (lines 197-201). The result is a capture box reading `Ctrl+F8` sitting directly
+above red text reading *"Ctrl+Shift+P is already in use by another application."* The message is
+informative in the moment, but it never clears, so it persists as a permanent-looking error next to
+a perfectly working configuration.
+
+**Fix.** Either surface the rejection in the transient `Status` line (which already exists and is the
+natural home for "that didn't work") and reserve `HotkeyError` for the *current* combination, or
+clear `_hotkeyRegistrationError` after the successful rollback registration at line 200.
+
+Related, lower stakes: if registration fails and `_lastGoodHotkey` is empty (first launch, combo
+already taken), the app ends up with **no** registered hotkey while the box still displays the
+rejected one. The error text covers it, but the state deserves a comment.
+
+---
+
+### Low / polish
+
+- **L1 — `wParam.ToInt32()` can throw.** `MainWindow.xaml.cs:39`. On x64 `wParam` is 64-bit and
+  `IntPtr.ToInt32()` throws `OverflowException` when the high bits are set. Short-circuit evaluation
+  means it only runs for `WM_HOTKEY`, where the value is a small id, so it is safe in practice — but
+  `wParam != NativeMethods.HotKeyId` (comparing `nint`) is both cleaner and incapable of throwing.
+
+- **L2 — The dead-key mask is one bit short.** `KeyCombo.cs:53` uses `mapped & 0x7FFF` with the
+  comment "top bit flags a dead key". Probing confirms the flag is bit **31**:
+  `MapVirtualKeyW(0xDE, MAPVK_VK_TO_CHAR)` returns `0x800000B4` on this layout. `& 0x7FFF` silently
+  truncates the character to 15 bits. Harmless for every realistic keyboard character, but
+  `(char)(mapped & 0xFFFF)` is correct and equally short.
+
+- **L3 — Template leftovers.** `App.xaml.cs:1-2` still carries `using System.Configuration;` and
+  `using System.Data;`, neither used. `AssemblyInfo.cs:3-10` is the stock `ThemeInfo` block complete
+  with the template's own explanatory comments; the app has no `generic.xaml`, so this can be reduced
+  to the bare attribute, or deleted entirely since the SDK default is equivalent.
+
+- **L4 — `PLAN.md` is checked in and stale.** It ends with *"Open questions to resolve during
+  planning"* — three questions that were all answered (AppData, normal window, yes to collision
+  blocking). A new reader hits unresolved-looking design questions in a repo that has already
+  shipped. Delete it, or move it to `docs/` with a "historical" header.
+
+- **L5 — Settings live in roaming AppData.** `SettingsStore.cs:11-14` uses
+  `SpecialFolder.ApplicationData` (`%AppData%\Roaming`), so a scan-code and hotkey configuration
+  follows the user to other machines with different keyboards. `LocalApplicationData` matches the
+  semantics better. Changing it orphans existing files, so it is only worth doing before wider
+  distribution — and the README's `%AppData%\ChronoStroke\settings.json` line would need updating.
+
+- **L6 — Assembly metadata and SDK pinning gaps.** `ChronoStroke.csproj:14-19` sets `Product`,
+  `AssemblyTitle`, `Description` and `Version` but no `<Company>`, `<Copyright>`, `<Authors>` or
+  `<ApplicationIcon>`. The shipped exe therefore has a blank publisher in its Properties dialog and
+  the generic .NET icon in the taskbar. For an unsigned binary that SmartScreen already warns about,
+  every bit of provenance in the file metadata helps. There is also no `global.json`, so the build
+  floats across the five SDKs installed here (9.0.120 through 10.0.400) and the workflow's `10.0.x`.
+
+- **L7 — CA5392: the P/Invokes lack `DefaultDllImportSearchPaths`.** `Interop/NativeMethods.cs:22-48`
+  (all five imports). Building with `AnalysisMode=All` flags every one. The real risk here is
+  essentially nil, since `user32.dll` is a KnownDLL and is loaded from the pre-mapped section rather
+  than from the executable's directory. But this ships as a single `.exe` that people drop into
+  `Downloads` and run, and the fix is one assembly-level attribute:
+  `[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)]`.
+
+- **L8 — Consider `PublishReadyToRun`.** WPF cold start dominates the perceived speed of a utility
+  like this, and `EnableCompressionInSingleFile` (`ChronoStroke.csproj:35`) already trades size for
+  start time in the other direction. `<PublishReadyToRun>true</PublishReadyToRun>` typically recovers
+  a large fraction of that. Worth measuring rather than adopting blind.
+
+- **L9 — Nearly every type is `public` in an application assembly.** `GlobalHotKey`, `KeyCombo`,
+  `RepeatEngine`, `AppSettings`, `SettingsStore`, `MainViewModel`, `KeyCaptureBox`. `AnalysisMode=All`
+  raises `CA1515` 36 times. Nothing consumes this assembly, and WPF resolves `internal` types in XAML
+  within the same assembly fine. Making them `internal` (and `sealed` where they are not already —
+  `MainViewModel`, `KeyCaptureBox`) narrows the surface and documents intent. Pure churn if done for
+  its own sake; worth doing next time those files are open.
+
+- **L10 — Brace style is inconsistent, and there is no `.editorconfig`.** The codebase uses full
+  Allman braces everywhere except three runs of single-line `if`s: `KeystrokeSender.cs:39-42`,
+  `GlobalHotKey.cs:77-80`, `KeyCombo.cs:30-33`. All three are the same "map flags onto a list" shape,
+  so the inconsistency is at least principled — but Microsoft's C# conventions call for braces, and
+  an `.editorconfig` would settle it permanently. The repo has none at all.
+
+- **L11 — Fixed window height will clip at large text scaling.** `MainWindow.xaml:10-11` pins
+  `Height="530"` with `ResizeMode="CanMinimize"`. At Windows' 225% text-size accessibility setting the
+  content grows past that and the Status line (`Grid.Row="3"`) is the first thing cut off, with no way
+  for the user to resize. `SizeToContent="Height"` keeps the fixed-window feel while adapting.
+
+- **L12 — Accessibility gaps in the XAML.** The label `TextBlock`s (`MainWindow.xaml:26,31,40`) are not
+  associated with their inputs via `AutomationProperties.LabeledBy`, so a screen reader announces the
+  capture boxes as unlabelled edit fields. The Status line (`MainWindow.xaml:62-65`) has no
+  `AutomationProperties.LiveSetting="Polite"`, so status changes are never announced.
+
+- **L13 — Field declared mid-property-block.** `MainViewModel.cs:75-76` puts `_loading` between the
+  `IntervalText` and `IsRunning` observable properties. Every other field is grouped at lines 19-34.
+
+- **L14 — `SettingsStore` exception filters are narrower than the operations they guard.**
+  `SettingsStore.cs:58` catches `IOException` and `UnauthorizedAccessException` on the save path, but
+  `Directory.CreateDirectory` can also throw `NotSupportedException` and `ArgumentException`, and
+  `File.Move` can throw `System.Security.SecurityException`. Because `SaveSettings` is called from a
+  property-changed handler (`MainViewModel.cs:154-156`) which is itself called from a binding setter,
+  an escaped exception here surfaces as an unhandled dispatcher exception — see H2. The `Load` filter
+  (line 36) similarly omits `NotSupportedException`, which `System.Text.Json` can throw.
+
+- **L15 — `ConfigureAwait` is inconsistent inside `RepeatEngine.StopAsync`.** Line 66 awaits
+  `cts.CancelAsync()` with the context captured, then line 72 awaits the loop with
+  `ConfigureAwait(false)`. Everything else in the file is uniformly `ConfigureAwait(false)`. Harmless
+  today (nothing blocks), but the file otherwise sets a standard worth keeping.
+
+- **L16 — The collision guard misses the partial case.** `MainViewModel.cs:99-102` blocks
+  `SendCombo == HotkeyCombo` exactly. It does not block "send `F8`, hotkey `Ctrl+F8`" — and if the
+  user happens to be holding Ctrl mid-run for an unrelated reason, the loop's own `F8` output becomes
+  `Ctrl+F8` and toggles itself off. `WaitForTriggerReleaseAsync` covers the *start*; nothing covers
+  mid-run. A same-virtual-key check with a softer warning would close it. Low frequency, genuinely
+  baffling when it happens.
+
+- **L17 — The view model reaches into `Application.Current` directly.** `MainViewModel.cs:48-58`. It is
+  the only place the VM touches a WPF static, and the null branch exists purely for a test host that
+  does not exist (M8). Capturing `Dispatcher.CurrentDispatcher` in the constructor would be both more
+  correct (it binds to the thread that actually built the VM) and self-contained. Note also that
+  `InvokeAsync` on a shut-down dispatcher aborts the operation silently rather than throwing — benign
+  here, worth knowing.
+
+- **L18 — `KeyCombo.DisplayName` allocates on every read.** `KeyCombo.cs:20-37` builds a `List<string>`
+  and joins it each time the property is read — and it is read from bindings, from status strings, and
+  from error messages. Negligible at this scale; noted only because the property looks free at the
+  call sites and isn't. C# 14's `field` keyword makes a cached version a three-line change.
+
+- **L19 — The teardown release injects modifier key-ups the user may be physically holding.**
+  `RepeatEngine.cs:125` unconditionally sends the full reversed batch, including `Ctrl`/`Shift`/`Alt`
+  key-ups. If the user stops the loop while genuinely holding Shift for something else, the target
+  window sees Shift go up. The comment at lines 121-124 argues (correctly) that an unmatched key-up is
+  harmless; that is true for the *send* key and slightly less true for modifiers. Very low impact.
+
+- **L20 — The README's shutdown guarantee is stronger than reality.** `README.md:33` promises *"Clean
+  shutdown — hotkeys unregistered, timers stopped, no key left held down."* That holds for normal exit
+  paths, but not if the process is killed (Task Manager, power loss, a crash — see H2) between `Press`
+  and `Release`, because Windows does not release injected keys on process exit. One line in the
+  Limitations section would make the claim honest.
+
+---
+
+## What's left to make this top-tier
+
+Ordered by impact-to-effort. Items 1-4 are the ones that separate "works on my machine" from "safe
+to hand to a stranger".
+
+1. **Fix the shutdown ordering** (H1) — unregister the hotkey and remove the `WndProc` hook *before*
+   awaiting the engine stop, and disable the window across the await. About 10 lines. Closes the only
+   path that can leave a key held down during a normal exit.
+2. **Add global exception handling and a catch-all in the repeat loop** (H2) —
+   `DispatcherUnhandledException` plus `TaskScheduler.UnobservedTaskException` in `App`, and a non-OCE
+   `catch` in `RunAsync` that reports through the existing `SendFailed` channel. About 20 lines, no
+   new dependency.
+3. **Make `StopAsync` fault-safe** (H3) — `try`/`finally` around the loop await so the CTS is always
+   disposed and a faulted loop cannot wedge the engine. About 6 lines; do it in the same change as (2).
+4. **Delete the Num Lock entry from `IsAlwaysExtended`** (M1) — one line, and it is a confirmed
+   wrong-key-injected bug.
+5. **Hoist scan-code resolution to `Start` on the UI thread** (M2) — fixes the keyboard-layout thread
+   affinity and removes ten P/Invokes and two allocations per tick in one change. Also makes the
+   interop layer testable without injecting anything.
+6. **Consolidate teardown into `MainViewModel.DisposeAsync`** (M4) — clears the CA1001 warning and
+   makes (1) structurally impossible to regress.
+7. **Pass the tag version into the publish** (M6) — three lines of YAML. Without it every release is
+   mislabelled and there is no way to tell versions apart from the binary.
+8. **Add a `build.yml` CI workflow and `.github/dependabot.yml`** (M7) — `main` currently has no
+   automated validation at all, and the workflow's own comment promises a Dependabot that isn't
+   configured.
+9. **Stop the per-keystroke disk I/O** (M3) — cache the last valid interval instead of re-reading
+   `settings.json`; consider `LostFocus` for the interval binding.
+10. **Give `KeyCaptureBox` a keyboard escape route** (M5) — Esc to move focus, documented in the
+    helper text. The app is currently unusable without a mouse.
+11. **Decide the testing question** (M8) — either take the dependency exception for a separate
+    `ChronoStroke.Tests` project covering the extended-key table, `ValidateInterval`, `DisplayName` and
+    the settings round-trip, or remove the two comments that imply tests exist.
+12. **Add an `.editorconfig`, an application icon, and assembly metadata** (L6, L10) — cheap
+    professionalism, and the icon in particular is the difference between "a tool" and "an exe someone
+    sent me".
+13. **Polish pass** — the accessibility attributes (L12), `SizeToContent` (L11), the exception filters
+    (L14), the README limitation (L20), and deleting `PLAN.md` (L4).
+
+---
+
+## What's already done well
+
+Worth being explicit about, because most of it is subtle enough to be broken by accident later.
+
+- **The `INPUT` union sizing is correct, and correct for the right reason.**
+  `Interop/NativeMethods.cs:60-90`. Declaring `MOUSEINPUT` and `HARDWAREINPUT` purely to size the
+  union, and `dwExtraInfo` as `nuint` rather than `uint`, are the two mistakes that make almost every
+  hand-written `SendInput` fail silently. Both are right, both are explained, and `InputSize` (line
+  116) is computed rather than hardcoded to 40. Verified: 40 bytes for `INPUT` on x64, 24 for
+  `KEYBDINPUT`.
+
+- **The extended-key handling is empirically derived, not guessed.**
+  `Interop/KeystrokeSender.cs:124-150`. I re-ran `MapVirtualKeyW` over the whole candidate set and the
+  remark's claims hold: the navigation cluster genuinely comes back unprefixed and genuinely collides
+  with the numpad, while Right Ctrl/Alt, Win, Apps and Divide genuinely do report `0xE0`. Ten of
+  eleven entries are correct, and the reasoning is documented well enough that M1 is a one-line fix
+  rather than an investigation.
+
+- **The `0xE1`/Pause fallback is the right judgement call.** `Interop/KeystrokeSender.cs:88-91`.
+  `VK_PAUSE` returns `0xE11D`; taking the low byte would send `0x1D`, which is Left Ctrl. Choosing to
+  degrade to virtual-key mode rather than send a plausible-looking lie is exactly right, and rare.
+
+- **One `SendInput` call per combination.** `Interop/KeystrokeSender.cs:56`. Relying on the documented
+  "inserted serially, never interleaved" guarantee rather than looping over individual calls is the
+  correct reading of the API, and the difference between a combo that works and one that tears.
+
+- **The key is released on every exit path.** `RepeatEngine.cs:119-126`. Unconditional `finally`,
+  including the cancellation-between-press-and-release case, with a comment explaining why an
+  unmatched key-up is acceptable.
+
+- **`WaitForTriggerReleaseAsync` and its deliberate absence of a timeout.** `RepeatEngine.cs:129-192`.
+  This is the most subtle code in the repository and the comment earns its length: it documents a bug
+  that was *measured* (1 `WM_HOTKEY` versus 6), explains why `MOD_NOREPEAT` alone is insufficient, and
+  records that a previous timeout-based version reintroduced the bug. That is exactly the comment a
+  future maintainer needs before "simplifying" it.
+
+- **Failures are surfaced, not swallowed.** The `SendOutcome` record struct
+  (`Interop/KeystrokeSender.cs:7-14`) carries expected/inserted/last-error, and the loop deduplicates
+  repeats so a broken send reports once rather than 20 times a second (`RepeatEngine.cs:96-107`). Most
+  utilities this size just ignore the `SendInput` return value.
+
+- **Settings persistence is done properly.** A source-generated `JsonSerializerContext`
+  (`AppSettings.cs:53-60`), write-to-temp-then-`File.Move` so a crash cannot corrupt the file
+  (`SettingsStore.cs:50-55`), clamp-on-load rather than trusting a hand-editable file
+  (`MainViewModel.cs:118-121`), and a flat DTO deliberately decoupled from the UI model. The
+  `[JsonIgnore]` reasoning on the convenience projections is a nice touch.
+
+- **The MVVM structure is right-sized.** Source-generated partial properties (`MainViewModel.cs:60-84`)
+  rather than the older backing-field form, `[NotifyPropertyChangedFor]` and
+  `[NotifyCanExecuteChangedFor]` used correctly to keep derived state and command enablement in sync,
+  and no abstraction layers invented for their own sake. The `_applyingHotkey` re-entrancy guard
+  (`MainViewModel.cs:176-211`) is a real problem solved with a real minimum of machinery, and the
+  `HotkeyDebounceMs` guard in `ToggleAsync` (lines 266-287) is honest defence in depth rather than
+  cargo cult.
+
+- **`SetResourceReference(StyleProperty, typeof(TextBox))`.** `KeyCaptureBox.cs:44-56`. This is the
+  correct fix for the implicit-style-versus-derived-type problem in the Fluent theme, and the comment
+  explains it better than the WPF documentation does. Verified that both `AccentButtonStyle` and
+  `SystemFillColorCriticalBrush` do exist in `PresentationFramework.Fluent` 10.0.11, so neither
+  `DynamicResource` in `MainWindow.xaml` is silently resolving to nothing.
+
+- **Modern WPF and .NET are actually used.** `RowDefinitions="Auto, Auto, *, Auto"` attribute syntax
+  (`MainWindow.xaml:19`) is a .NET 9+ feature; `[LibraryImport]` throughout rather than `[DllImport]`;
+  `PeriodicTimer` rather than `DispatcherTimer` or `Thread.Sleep`; `CancelAsync`; `IAsyncDisposable`;
+  `Environment.TickCount64`; a `readonly record struct` for `KeyCombo`. The deliberate *non*-use of
+  `ThemeMode` — because it is still `[Experimental("WPF0001")]` in .NET 10 — is a correct call,
+  documented in `App.xaml:9-14`.
+
+- **The build configuration is thought through and documented.** `ChronoStroke.csproj:21-42`.
+  `PublishSelfContained` versus `SelfContained`, `IncludeNativeLibrariesForSelfExtract`,
+  `SatelliteResourceLanguages`, and — importantly — a comment explaining why `PublishTrimmed` is
+  *absent* rather than leaving a future maintainer to discover the WPF trimming failure at runtime.
+
+- **The release workflow is genuinely well built.** `.github/workflows/release.yml`. Actions pinned to
+  commit SHAs with the rationale stated, `permissions: contents: read` at the top with write scoped to
+  the one job that needs it, `timeout-minutes`, an explicit existence check on the published artifact,
+  a SHA256 checksum published alongside an unsigned binary, `--verify-tag`, and release notes kept in
+  a template file to avoid three-way quoting between YAML, PowerShell and Markdown. That last one is a
+  lesson most people learn the hard way.
+
+- **The README is better than most commercial software ships with.** It explains *why the project
+  exists* in terms of scan codes versus virtual keys, documents the non-obvious design decisions
+  (`MOD_NOREPEAT`, the release-wait, the extended-key list), states the limitations honestly including
+  UIPI and anti-cheat, and puts the terms-of-service responsibility squarely on the user. The
+  deliberate refusal to call `timeBeginPeriod` — and saying so — is the kind of restraint that does not
+  usually get written down.
+
+- **Hygiene.** Clean build at zero warnings; only one warning at `AnalysisMode=Recommended` (CA1001,
+  covered as M4); `dotnet list package --vulnerable --include-transitive` reports nothing and
+  `--outdated` reports nothing; the single dependency (`CommunityToolkit.Mvvm` 8.4.2) is current; MIT
+  licensed; no secrets, no network calls, no telemetry, and a `.slnx` solution file rather than the
+  legacy format.
