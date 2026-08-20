@@ -16,17 +16,21 @@ internal sealed record AppSettings
 
     public int IntervalMs { get; init; }
 
+    /// <summary>How far the interval's up and down arrows move it per click.</summary>
+    public int IntervalStepMs { get; init; }
+
     public ushort HotkeyVirtualKey { get; init; }
 
     [JsonConverter(typeof(JsonStringEnumConverter<ModifierKeys>))]
     public ModifierKeys HotkeyModifiers { get; init; }
 
-    /// <summary>Send X every 250 ms, toggled with Ctrl+F8.</summary>
+    /// <summary>Send X every 250 ms in steps of 10 ms, toggled with Ctrl+F8.</summary>
     public static AppSettings Default => new()
     {
         SendVirtualKey = 0x58,                      // X
         SendModifiers = ModifierKeys.None,
         IntervalMs = 250,
+        IntervalStepMs = 10,
         HotkeyVirtualKey = 0x77,                    // F8
         HotkeyModifiers = ModifierKeys.Control,
     };
@@ -40,11 +44,12 @@ internal sealed record AppSettings
     [JsonIgnore]
     public KeyCombo HotkeyCombo => new(HotkeyVirtualKey, HotkeyModifiers);
 
-    public static AppSettings From(KeyCombo send, KeyCombo hotkey, int intervalMs) => new()
+    public static AppSettings From(KeyCombo send, KeyCombo hotkey, int intervalMs, int intervalStepMs) => new()
     {
         SendVirtualKey = send.VirtualKey,
         SendModifiers = send.Modifiers,
         IntervalMs = intervalMs,
+        IntervalStepMs = intervalStepMs,
         HotkeyVirtualKey = hotkey.VirtualKey,
         HotkeyModifiers = hotkey.Modifiers,
     };

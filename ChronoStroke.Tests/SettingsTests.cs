@@ -18,7 +18,8 @@ public class SettingsTests
     private static readonly AppSettings Sample = AppSettings.From(
         new KeyCombo(0x58, ModifierKeys.None),                          // X
         new KeyCombo(0x77, ModifierKeys.Control | ModifierKeys.Shift),  // Ctrl+Shift+F8
-        300);
+        300,
+        5);
 
     [Fact]
     public void SettingsSurviveARoundTrip()
@@ -98,12 +99,45 @@ public class SettingsTests
         Assert.Equal(0, value);
     }
 
+    [Theory]
+    [InlineData("10", 10)]
+    [InlineData("1", MainViewModel.MinStepMs)]
+    [InlineData("1000", MainViewModel.MaxStepMs)]
+    [InlineData("  5  ", 5)]            // trimmed before parsing
+    public void ValidStepsAreAccepted(string text, int expected)
+    {
+        Assert.Null(MainViewModel.ValidateStep(text, out var value));
+        Assert.Equal(expected, value);
+    }
+
+    /// <summary>
+    /// A zero step would make the arrows do nothing, and the rest are the same parsing failures
+    /// the interval box rejects.
+    /// </summary>
+    [Theory]
+    [InlineData("0")]
+    [InlineData("1001")]
+    [InlineData("-5")]                  // NumberStyles.None rejects the sign
+    [InlineData("2.5")]
+    [InlineData("5 ms")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void UnusableStepsAreRejectedWithAReason(string? text)
+    {
+        var error = MainViewModel.ValidateStep(text, out var value);
+
+        Assert.NotNull(error);
+        Assert.NotEqual(string.Empty, error);
+        Assert.Equal(0, value);
+    }
+
     [Fact]
     public void DefaultsAreWithinTheAppsOwnLimits()
     {
         var defaults = AppSettings.Default;
 
         Assert.InRange(defaults.IntervalMs, MainViewModel.MinIntervalMs, MainViewModel.MaxIntervalMs);
+        Assert.InRange(defaults.IntervalStepMs, MainViewModel.MinStepMs, MainViewModel.MaxStepMs);
         Assert.False(defaults.SendCombo.IsEmpty);
         Assert.False(defaults.HotkeyCombo.IsEmpty);
         Assert.NotEqual(defaults.SendCombo, defaults.HotkeyCombo);

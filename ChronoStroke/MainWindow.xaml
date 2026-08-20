@@ -16,6 +16,36 @@
     <Window.Resources>
         <!-- Built into WPF; no custom converter needed. -->
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
+
+        <!-- The theme's RepeatButton is the one a scroll bar uses: its default style aligns it
+             Left and Center, so it shrinks to the size of its glyph and only that patch takes
+             the click. Stretching it is the whole fix — the rest strips the face and border so
+             the arrows sit on the text box's own background.
+
+             This has to be a Style rather than attributes on the buttons. WPF ranks a local
+             value above a template trigger, so Background="Transparent" set on the element
+             would beat the theme template's own pointer-over and pressed triggers and freeze
+             the arrows dead on hover. As a Style setter it sits below them, and they win. -->
+        <Style x:Key="SpinButtonStyle" TargetType="RepeatButton"
+               BasedOn="{StaticResource {x:Type RepeatButton}}">
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="VerticalAlignment" Value="Stretch" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="FontSize" Value="8" />
+            <Setter Property="Delay" Value="500" />
+            <Setter Property="Interval" Value="80" />
+            <Style.Triggers>
+                <!-- The theme paints a disabled button a solid grey, which on an arrow with no
+                     face of its own reads as a slab appearing at the guard rails. Dimming the
+                     glyph is the whole message. A Style trigger is what can say so: it outranks
+                     the template trigger that would otherwise fill the background. -->
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="Transparent" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
     </Window.Resources>
 
     <Grid Margin="20" RowDefinitions="Auto, Auto, *, Auto">
@@ -50,16 +80,72 @@
                        Text="{Binding HotkeyWarning}"
                        Visibility="{Binding HasHotkeyWarning, Converter={StaticResource BoolToVis}}" />
 
-            <TextBlock x:Name="IntervalLabel" Text="Interval (ms)" Margin="0,18,0,6" />
-            <TextBox Text="{Binding IntervalText, UpdateSourceTrigger=PropertyChanged}"
-                     IsEnabled="{Binding CanEdit}"
-                     AutomationProperties.LabeledBy="{Binding ElementName=IntervalLabel}" />
+            <Grid Margin="0,18,0,0" ColumnDefinitions="*, Auto">
+
+                <StackPanel Grid.Column="0">
+                    <TextBlock x:Name="IntervalLabel" Text="Interval (ms)" Margin="0,0,0,6" />
+
+                    <!-- WPF has no NumericUpDown, so the spinner is composed here. The
+                         arrows sit inside the box's right edge rather than beside it, which is
+                         what makes the two read as one control — the text box keeps its own
+                         chrome and focus visuals, and its right padding is widened to the exact
+                         width the arrows occupy so a long number never runs under them. Its
+                         other three sides keep the theme's 10,5,_,6 so the digits line up with
+                         the Step box alongside. -->
+                    <Grid>
+                        <TextBox Text="{Binding IntervalText, UpdateSourceTrigger=PropertyChanged}"
+                                 IsEnabled="{Binding CanEdit}"
+                                 Padding="10,5,34,6"
+                                 AutomationProperties.LabeledBy="{Binding ElementName=IntervalLabel}">
+                            <!-- Up and down keys do what the arrows do, which is what anyone
+                                 who has used a spinner before will try first. -->
+                            <TextBox.InputBindings>
+                                <KeyBinding Key="Up" Command="{Binding StepUpCommand}" />
+                                <KeyBinding Key="Down" Command="{Binding StepDownCommand}" />
+                            </TextBox.InputBindings>
+                        </TextBox>
+
+                        <!-- Inset by 3 so the arrows clear the box's 1px border and its rounded
+                             corners. Each button then fills half of what is left: a 28x13 click
+                             target rather than the glyph on its own. -->
+                        <Grid Width="28"
+                              Margin="0,3,3,3"
+                              HorizontalAlignment="Right"
+                              RowDefinitions="*, *">
+                            <RepeatButton Grid.Row="0"
+                                          Style="{StaticResource SpinButtonStyle}"
+                                          Content="&#x25B2;"
+                                          Command="{Binding StepUpCommand}"
+                                          AutomationProperties.Name="Increase interval" />
+                            <RepeatButton Grid.Row="1"
+                                          Style="{StaticResource SpinButtonStyle}"
+                                          Content="&#x25BC;"
+                                          Command="{Binding StepDownCommand}"
+                                          AutomationProperties.Name="Decrease interval" />
+                        </Grid>
+                    </Grid>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Width="96" Margin="12,0,0,0">
+                    <TextBlock x:Name="StepLabel" Text="Step (ms)" Margin="0,0,0,6" />
+                    <TextBox Text="{Binding StepText, UpdateSourceTrigger=PropertyChanged}"
+                             IsEnabled="{Binding CanEdit}"
+                             AutomationProperties.LabeledBy="{Binding ElementName=StepLabel}" />
+                </StackPanel>
+            </Grid>
+
             <TextBlock Margin="0,6,0,0"
                        FontSize="12"
                        TextWrapping="Wrap"
                        Foreground="{DynamicResource SystemFillColorCriticalBrush}"
                        Text="{Binding IntervalError}"
                        Visibility="{Binding HasIntervalError, Converter={StaticResource BoolToVis}}" />
+            <TextBlock Margin="0,6,0,0"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       Foreground="{DynamicResource SystemFillColorCriticalBrush}"
+                       Text="{Binding StepError}"
+                       Visibility="{Binding HasStepError, Converter={StaticResource BoolToVis}}" />
 
             <StackPanel Orientation="Horizontal" Margin="0,20,0,0">
                 <Button Padding="16,8"

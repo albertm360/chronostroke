@@ -1,13 +1,13 @@
 name: Build
 
-# Validates every push and pull request on the long-lived branches. Without this
+# Validates every push to main and every pull request aimed at it. Without this
 # nothing checks that main compiles until someone cuts a release, at which point
 # the release is the thing that fails.
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
   pull_request:
-    branches: [main, develop]
+    branches: [main]
 
 permissions:
   contents: read

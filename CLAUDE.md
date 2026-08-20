@@ -55,22 +55,36 @@ Consult before writing code; do not rely on memory for Fluent theme setup or Win
   without one, deliberately. Tags are `vX.Y.Z`; the workflow rejects any other shape.
 
 ## Branching
-- gitflow. Features branch off `develop` and merge back with `--no-ff`. `main` advances through a
-  release branch, and every release commit on it is tagged.
-- Put `main` and `develop` back in sync after a release: back-merge, and fast-forward `develop`
-  when it has no commits of its own, so GitHub stops reporting the two as diverged.
-- Dependabot targets `develop`, configured in `.github/dependabot.yml` — which Dependabot reads
-  from the default branch whatever branch it names, so changes there only take effect on `main`.
+- `main` is the only long-lived branch, and the only one that exists on the remote. This was
+  gitflow until 1.2.0; `develop` was retired because a solo project got no benefit from a second
+  permanent branch that had to be kept in sync with the first one by hand.
+- Work happens on a short-lived branch — `feature/…`, or `fix/…` — which merges back into `main`
+  with `--no-ff` and is then deleted, locally and on the remote. The merge commit is what keeps
+  a feature legible as one unit in the log after its branch is gone.
+- Releases are tagged directly on `main`; there is no release branch. Tag the merge commit that
+  finishes the release, and push the tag to publish.
+- Dependabot is configured in `.github/dependabot.yml` with no `target-branch`, so it aims at the
+  default branch, `main`. Dependabot reads that file from the default branch only, so a change to
+  it has no effect until it lands there.
 
 ## Working style
 - **Don't over-engineer.** This is a single-window utility, not an enterprise app.
 - Explain P/Invoke code as you write it — I want to understand the interop, not just have it.
 - Correct cleanup matters: unregister hotkeys and stop timers on exit, no leaked native handles.
-- You cannot see the window or tell whether keystrokes reach a game. For anything visual, and
-  for anything involving a real target application, tell me exactly what to run and what I should
-  expect to see — I'll report back.
-- You can verify more than that unaided, though, and should before asking me. Launching the built
-  exe and closing it proves the XAML parses and that shutdown exits 0. `dotnet test` covers the
-  pure logic. A throwaway console project in the scratchpad, linking this app's own source files,
-  will answer a Win32 question outright — that is how the Num Lock scan code was settled, rather
-  than by reasoning about what `MapVirtualKeyW` probably returns.
+- You can see the window, so check it yourself before asking me. Launch the built exe, wait for
+  its `MainWindowHandle`, then `PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT)` into a bitmap and
+  read the PNG; the exit code on the way out proves the XAML parsed and that shutdown is clean.
+  Layout, alignment, theme brushes, disabled and error states are all settled that way. Close
+  with `WM_CLOSE` rather than killing the process, so the app runs its real shutdown — and if a
+  build is blocked by a locked exe, that is usually an instance you left running. Two traps:
+  capture with `PrintWindow`, never `CopyFromScreen`, which grabs whatever is on my desktop
+  instead of the window; and the capturing process must call `SetProcessDpiAwarenessContext`
+  first or the window rect comes back virtualised on a scaled monitor.
+- What a still frame cannot show is still mine: hover and pressed feedback, animation, how a
+  hold-to-repeat feels, and whether keystrokes reach a game. For those, and for anything
+  involving a real target application, tell me exactly what to run and what I should expect to
+  see — I'll report back.
+- Verify whatever else you can unaided too. `dotnet test` covers the pure logic. A throwaway
+  console project in the scratchpad, linking this app's own source files, will answer a Win32
+  question outright — that is how the Num Lock scan code was settled, rather than by reasoning
+  about what `MapVirtualKeyW` probably returns.
