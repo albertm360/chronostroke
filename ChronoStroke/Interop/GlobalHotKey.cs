@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using System.Windows.Input;
 
@@ -22,7 +23,7 @@ public sealed class GlobalHotKey(IntPtr windowHandle) : IDisposable
     /// Registers <paramref name="combo"/>, replacing any existing registration.
     /// </summary>
     /// <returns>True on success; otherwise false with <paramref name="error"/> explaining why.</returns>
-    public bool TryRegister(KeyCombo combo, out string? error)
+    public bool TryRegister(KeyCombo combo, [NotNullWhen(false)] out string? error)
     {
         Unregister();
 

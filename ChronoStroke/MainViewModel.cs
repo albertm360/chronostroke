@@ -28,6 +28,15 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     private string? _hotkeyRegistrationError;
 
+    /// <summary>Last interval the box held that parsed and passed the guard rails.</summary>
+    private int _lastValidIntervalMs = AppSettings.Default.IntervalMs;
+
+    /// <summary>What is currently on disk, so an unchanged configuration is not rewritten.</summary>
+    private AppSettings? _lastSaved;
+
+    /// <summary>Suppresses saving while settings are being applied from disk.</summary>
+    private bool _loading;
+
     /// <summary>Shortest gap between two accepted hotkey toggles.</summary>
     private const int HotkeyDebounceMs = 250;
 
@@ -72,9 +81,6 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     [NotifyCanExecuteChangedFor(nameof(StartCommand))]
     public partial string IntervalText { get; set; } = "250";
 
-    /// <summary>Suppresses saving while settings are being applied from disk.</summary>
-    private bool _loading;
-
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanEdit))]
     [NotifyCanExecuteChangedFor(nameof(StartCommand), nameof(StopCommand))]
@@ -117,13 +123,17 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
             // Clamp rather than trust. The file is plain text in a folder the user can open, so
             // a hand-edited 1 ms interval must not slip past the guard rail the UI enforces.
-            IntervalText = Math.Clamp(settings.IntervalMs, MinIntervalMs, MaxIntervalMs)
-                .ToString(CultureInfo.InvariantCulture);
+            _lastValidIntervalMs = Math.Clamp(settings.IntervalMs, MinIntervalMs, MaxIntervalMs);
+            IntervalText = _lastValidIntervalMs.ToString(CultureInfo.InvariantCulture);
         }
         finally
         {
             _loading = false;
         }
+
+        // What is now on screen, so the first edit is compared against it rather than written
+        // back unchanged.
+        _lastSaved = AppSettings.From(SendCombo, HotkeyCombo, _lastValidIntervalMs);
     }
 
     /// <summary>
@@ -137,23 +147,40 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
-        // Keep the last valid interval rather than writing a half-typed one; the text box
-        // updates on every keystroke, so "25" exists briefly on the way to "250".
-        if (ValidateInterval(IntervalText, out var interval) is not null)
+        var settings = AppSettings.From(SendCombo, HotkeyCombo, _lastValidIntervalMs);
+
+        // The interval box updates its binding on every keystroke, so typing "250" arrives here
+        // three times and half-typed values like "2" arrive as invalid ones. Comparing against
+        // what was last written collapses that to a single save once the value is usable, and
+        // skips the disk entirely while the user is still mid-number.
+        if (settings == _lastSaved)
         {
-            interval = SettingsStore.Load().IntervalMs;
+            return;
         }
 
-        var error = SettingsStore.Save(AppSettings.From(SendCombo, HotkeyCombo, interval));
+        var error = SettingsStore.Save(settings);
         if (error is not null)
         {
             Status = error;
+            return;
         }
+
+        _lastSaved = settings;
     }
 
     partial void OnSendComboChanged(KeyCombo value) => SaveSettings();
 
-    partial void OnIntervalTextChanged(string value) => SaveSettings();
+    partial void OnIntervalTextChanged(string value)
+    {
+        // Half-typed values never become the saved interval; the last usable one stands until
+        // the box holds another.
+        if (ValidateInterval(value, out var interval) is null)
+        {
+            _lastValidIntervalMs = interval;
+        }
+
+        SaveSettings();
+    }
 
     // ------------------------------------------------------------------ hotkey
 
@@ -197,8 +224,24 @@ public sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 if (!_lastGoodHotkey.IsEmpty && _lastGoodHotkey != HotkeyCombo)
                 {
                     HotkeyCombo = _lastGoodHotkey;
-                    _hotKey.TryRegister(_lastGoodHotkey, out _);
+                    if (_hotKey.TryRegister(_lastGoodHotkey, out _))
+                    {
+                        // The box has just gone back to showing the old combination, so leaving
+                        // the error in place would park a permanent-looking complaint about
+                        // Ctrl+Shift+P directly beneath a box reading Ctrl+F8. The rejection is
+                        // still worth saying — once, in the status line, where messages are
+                        // understood to be about what just happened rather than about the
+                        // current state.
+                        _hotkeyRegistrationError = null;
+                        Status = error;
+                    }
                 }
+
+                // If there is nothing to roll back to — first launch with the default hotkey
+                // already taken — the app deliberately ends up with no hotkey registered at all.
+                // The box keeps showing the rejected combination and the error stays under it,
+                // which is the honest description of where things stand: nothing is listening,
+                // and the Start button is still there.
             }
         }
         finally
