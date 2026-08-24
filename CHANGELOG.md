@@ -11,6 +11,19 @@ Add the section before tagging.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-24
+
+### Changed
+
+- **The main window follows Fluent UX conventions more closely.** Hotkey and interval/step
+  validation messages are now InfoBar-style banners — a tinted, rounded box with an icon — instead
+  of bare colored text. Field labels are semibold, the interval/step boxes carry a range hint, and
+  the status line gets a divider above it and a colored dot that shows at a glance whether the
+  loop is running.
+- Text that used to dim itself with a flat opacity now uses the theme's own secondary/tertiary
+  text brushes, so light and dark mode each get the alpha the Fluent theme actually intends
+  instead of an approximation of it.
+
 ## [1.2.0] - 2026-08-21
 
 ### Added
@@ -86,7 +99,8 @@ repository. Three of the fixes below are things you could hit in normal use.
   configurable interval, toggled with a global hotkey. Scan-code injection through `SendInput`,
   settings persisted between runs, and a Fluent UI that follows the system light/dark theme.
 
-[Unreleased]: https://github.com/albertm360/chronostroke/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/albertm360/chronostroke/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/albertm360/chronostroke/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/albertm360/chronostroke/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/albertm360/chronostroke/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/albertm360/chronostroke/releases/tag/v1.0.0
