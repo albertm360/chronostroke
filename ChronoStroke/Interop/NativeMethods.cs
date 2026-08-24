@@ -147,6 +147,21 @@ internal static partial class NativeMethods
     /// <summary>Reserved by the debugger at all times — never register it as a hotkey.</summary>
     internal const ushort VK_F12 = 0x7B;
 
+    // The keys that are safe to register without a modifier, as contiguous ranges and
+    // singletons. See GlobalHotKey.IsSafeWithoutModifiers for why the set is named outright
+    // rather than derived. Values from the virtual-key code table:
+    // https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
+    internal const ushort VK_PAUSE = 0x13;
+    internal const ushort VK_F1 = 0x70;
+    internal const ushort VK_F24 = 0x87;
+    internal const ushort VK_SCROLL = 0x91;
+
+    /// <summary>First of the contiguous browser/volume/media/launch block, VK_BROWSER_BACK.</summary>
+    internal const ushort VK_BROWSER_BACK = 0xA6;
+
+    /// <summary>Last of that same block, VK_LAUNCH_APP2.</summary>
+    internal const ushort VK_LAUNCH_APP2 = 0xB7;
+
     // ---------------------------------------------------------------- hotkeys
 
     internal const uint MOD_ALT = 0x0001;
