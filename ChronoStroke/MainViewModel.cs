@@ -315,10 +315,10 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 }
 
                 // If there is nothing to roll back to — first launch with the default hotkey
-                // already taken — the app deliberately ends up with no hotkey registered at all.
-                // The box keeps showing the rejected combination and the error stays under it,
-                // which is the honest description of where things stand: nothing is listening,
-                // and the Start button is still there.
+                // already taken — the app ends up with no hotkey registered at all. The box
+                // keeps showing the rejected combination and the error stays under it, which is
+                // the honest description of where things stand: nothing is listening. Start
+                // disables itself in that state; see CanStart for why it has to.
             }
         }
         finally
@@ -411,8 +411,17 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         IntervalText = next.ToString(CultureInfo.InvariantCulture);
     }
 
+    /// <summary>
+    /// The last term is a safety interlock rather than a validation rule. With no hotkey
+    /// registered there is no keyboard way to stop the loop, and the only remaining one is
+    /// reaching this window with the mouse while the app injects a key of the user's choosing
+    /// into whatever has focus, every 50 ms — with Alt+Tab, Enter and Alt+F4 all being things
+    /// they may have picked as the key to send. Refusing to start is the difference between an
+    /// inconvenience and needing the power button.
+    /// </summary>
     private bool CanStart =>
-        !IsRunning && !SendCombo.IsEmpty && !HasIntervalError && CollisionError is null;
+        !IsRunning && !SendCombo.IsEmpty && !HasIntervalError && CollisionError is null
+        && _hotKey?.Current.IsEmpty == false;
 
     [RelayCommand(CanExecute = nameof(CanStart))]
     private void Start()
