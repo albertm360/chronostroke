@@ -53,8 +53,21 @@ internal sealed class RepeatEngine : IAsyncDisposable
         var down = KeystrokeSender.BuildBatch(combo, keyUp: false);
         var up = KeystrokeSender.BuildBatch(combo, keyUp: true);
 
-        _cts = new CancellationTokenSource();
-        _loop = Task.Run(() => RunAsync(down, up, intervalMs, triggerCombo, _cts.Token));
+        // The token is read here, on the calling thread, rather than inside the lambda. Written
+        // as `_cts.Token` the read is deferred to whenever the thread pool dequeues the work
+        // item — and StopAsync sets _cts to null before it awaits, so a Stop arriving in that
+        // gap leaves the lambda dereferencing null. Nothing has been pressed at that point, so
+        // no key is left down, but the NullReferenceException faults the loop task, and
+        // StopAsync only catches OperationCanceledException: it escapes to the dispatcher and
+        // takes the app down with the unexpected-error dialog.
+        //
+        // Handing the token to Task.Run as well means a Stop that lands before the pool starts
+        // the work item skips RunAsync entirely rather than starting a loop already cancelled.
+        // The task then completes as Cancelled, which is the case StopAsync already handles.
+        var cts = new CancellationTokenSource();
+        var token = cts.Token;
+        _cts = cts;
+        _loop = Task.Run(() => RunAsync(down, up, intervalMs, triggerCombo, token), token);
     }
 
     public async Task StopAsync()
