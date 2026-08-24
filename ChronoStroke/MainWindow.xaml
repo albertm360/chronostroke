@@ -46,44 +46,77 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
+
+        <Style x:Key="FieldLabelStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+        </Style>
+
+        <!-- Fluent's InfoBar has no WPF equivalent, so this is the whole control: a tinted,
+             rounded box with an icon next to wrapping text. Severity (critical vs. caution)
+             is just the Background/Foreground the caller supplies; the chrome is shared. -->
+        <Style x:Key="BannerStyle" TargetType="Border">
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="12,10" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
+        </Style>
     </Window.Resources>
 
     <Grid Margin="20" RowDefinitions="Auto, Auto, *, Auto">
 
         <TextBlock Grid.Row="0" Text="ChronoStroke" FontSize="24" FontWeight="SemiBold" />
-        <TextBlock Grid.Row="1" Margin="0,4,0,0" Text="Repeats a key into whichever window has focus" Opacity="0.7" />
+        <TextBlock Grid.Row="1" Margin="0,4,0,0" FontSize="13.5"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                   Text="Repeats a key into whichever window has focus" />
 
         <StackPanel Grid.Row="2" Margin="0,24,0,0">
 
-            <TextBlock x:Name="SendLabel" Text="Key to send" Margin="0,0,0,6" />
+            <TextBlock x:Name="SendLabel" Style="{StaticResource FieldLabelStyle}" Text="Key to send" Margin="0,0,0,6" />
             <local:KeyCaptureBox Combo="{Binding SendCombo}" IsEnabled="{Binding CanEdit}"
                                  AutomationProperties.LabeledBy="{Binding ElementName=SendLabel}" />
-            <TextBlock Margin="0,6,0,0" Opacity="0.6" FontSize="12" TextWrapping="Wrap"
+            <TextBlock Margin="0,6,0,0" FontSize="12" TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                        Text="Click the box, then press the key or combination you want repeated. Esc leaves the box." />
 
-            <TextBlock x:Name="HotkeyLabel" Text="Start / stop hotkey" Margin="0,18,0,6" />
+            <TextBlock x:Name="HotkeyLabel" Style="{StaticResource FieldLabelStyle}" Text="Start / stop hotkey" Margin="0,18,0,6" />
             <local:KeyCaptureBox Combo="{Binding HotkeyCombo}" IsEnabled="{Binding CanEdit}"
                                  AutomationProperties.LabeledBy="{Binding ElementName=HotkeyLabel}" />
-            <TextBlock Margin="0,6,0,0"
-                       FontSize="12"
-                       TextWrapping="Wrap"
-                       Foreground="{DynamicResource SystemFillColorCriticalBrush}"
-                       Text="{Binding HotkeyError}"
-                       Visibility="{Binding HasHotkeyError, Converter={StaticResource BoolToVis}}" />
+            <Border Margin="0,8,0,0"
+                    Style="{StaticResource BannerStyle}"
+                    Background="{DynamicResource SystemFillColorCriticalBackgroundBrush}"
+                    Visibility="{Binding HasHotkeyError, Converter={StaticResource BoolToVis}}">
+                <Grid ColumnDefinitions="Auto, *">
+                    <TextBlock Grid.Column="0" Margin="0,0,8,0" FontSize="13"
+                               Foreground="{DynamicResource SystemFillColorCriticalBrush}"
+                               Text="&#x2297;" />
+                    <TextBlock Grid.Column="1" FontSize="12.5" TextWrapping="Wrap"
+                               Foreground="{DynamicResource SystemFillColorCriticalBrush}"
+                               Text="{Binding HotkeyError}" />
+                </Grid>
+            </Border>
 
             <!-- Advisory rather than an error: the configuration is legal and will run. Caution
-                 colour keeps it visually distinct from the blocking messages above. -->
-            <TextBlock Margin="0,6,0,0"
-                       FontSize="12"
-                       TextWrapping="Wrap"
-                       Foreground="{DynamicResource SystemFillColorCautionBrush}"
-                       Text="{Binding HotkeyWarning}"
-                       Visibility="{Binding HasHotkeyWarning, Converter={StaticResource BoolToVis}}" />
+                 colour keeps it visually distinct from the blocking banner above. -->
+            <Border Margin="0,8,0,0"
+                    Style="{StaticResource BannerStyle}"
+                    Background="{DynamicResource SystemFillColorCautionBackgroundBrush}"
+                    Visibility="{Binding HasHotkeyWarning, Converter={StaticResource BoolToVis}}">
+                <Grid ColumnDefinitions="Auto, *">
+                    <TextBlock Grid.Column="0" Margin="0,0,8,0" FontSize="13"
+                               Foreground="{DynamicResource SystemFillColorCautionBrush}"
+                               Text="&#x25B3;" />
+                    <TextBlock Grid.Column="1" FontSize="12.5" TextWrapping="Wrap"
+                               Foreground="{DynamicResource SystemFillColorCautionBrush}"
+                               Text="{Binding HotkeyWarning}" />
+                </Grid>
+            </Border>
 
             <Grid Margin="0,18,0,0" ColumnDefinitions="*, Auto">
 
                 <StackPanel Grid.Column="0">
-                    <TextBlock x:Name="IntervalLabel" Text="Interval (ms)" Margin="0,0,0,6" />
+                    <TextBlock x:Name="IntervalLabel" Style="{StaticResource FieldLabelStyle}" Text="Interval (ms)" Margin="0,0,0,6" />
 
                     <!-- WPF has no NumericUpDown, so the spinner is composed here. The
                          arrows sit inside the box's right edge rather than beside it, which is
@@ -127,7 +160,7 @@
                 </StackPanel>
 
                 <StackPanel Grid.Column="1" Width="96" Margin="12,0,0,0">
-                    <TextBlock x:Name="StepLabel" Text="Step (ms)" Margin="0,0,0,6" />
+                    <TextBlock x:Name="StepLabel" Style="{StaticResource FieldLabelStyle}" Text="Step (ms)" Margin="0,0,0,6" />
                     <TextBox Text="{Binding StepText, UpdateSourceTrigger=PropertyChanged}"
                              IsEnabled="{Binding CanEdit}"
                              AutomationProperties.LabeledBy="{Binding ElementName=StepLabel}" />
@@ -136,16 +169,35 @@
 
             <TextBlock Margin="0,6,0,0"
                        FontSize="12"
-                       TextWrapping="Wrap"
-                       Foreground="{DynamicResource SystemFillColorCriticalBrush}"
-                       Text="{Binding IntervalError}"
-                       Visibility="{Binding HasIntervalError, Converter={StaticResource BoolToVis}}" />
-            <TextBlock Margin="0,6,0,0"
-                       FontSize="12"
-                       TextWrapping="Wrap"
-                       Foreground="{DynamicResource SystemFillColorCriticalBrush}"
-                       Text="{Binding StepError}"
-                       Visibility="{Binding HasStepError, Converter={StaticResource BoolToVis}}" />
+                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                       Text="{Binding RangeHint}" />
+
+            <Border Margin="0,8,0,0"
+                    Style="{StaticResource BannerStyle}"
+                    Background="{DynamicResource SystemFillColorCriticalBackgroundBrush}"
+                    Visibility="{Binding HasIntervalError, Converter={StaticResource BoolToVis}}">
+                <Grid ColumnDefinitions="Auto, *">
+                    <TextBlock Grid.Column="0" Margin="0,0,8,0" FontSize="13"
+                               Foreground="{DynamicResource SystemFillColorCriticalBrush}"
+                               Text="&#x2297;" />
+                    <TextBlock Grid.Column="1" FontSize="12.5" TextWrapping="Wrap"
+                               Foreground="{DynamicResource SystemFillColorCriticalBrush}"
+                               Text="{Binding IntervalError}" />
+                </Grid>
+            </Border>
+            <Border Margin="0,8,0,0"
+                    Style="{StaticResource BannerStyle}"
+                    Background="{DynamicResource SystemFillColorCriticalBackgroundBrush}"
+                    Visibility="{Binding HasStepError, Converter={StaticResource BoolToVis}}">
+                <Grid ColumnDefinitions="Auto, *">
+                    <TextBlock Grid.Column="0" Margin="0,0,8,0" FontSize="13"
+                               Foreground="{DynamicResource SystemFillColorCriticalBrush}"
+                               Text="&#x2297;" />
+                    <TextBlock Grid.Column="1" FontSize="12.5" TextWrapping="Wrap"
+                               Foreground="{DynamicResource SystemFillColorCriticalBrush}"
+                               Text="{Binding StepError}" />
+                </Grid>
+            </Border>
 
             <StackPanel Orientation="Horizontal" Margin="0,20,0,0">
                 <Button Padding="16,8"
@@ -159,14 +211,36 @@
             </StackPanel>
         </StackPanel>
 
-        <!-- LiveSetting makes a screen reader announce status changes as they happen. Without
-             it the line is readable only if the user goes looking for it, which defeats the
-             point of a line whose whole job is to report what just happened. -->
-        <TextBlock Grid.Row="3"
-                   Margin="0,24,0,0"
-                   Text="{Binding Status}"
-                   TextWrapping="Wrap"
-                   Opacity="0.7"
-                   AutomationProperties.LiveSetting="Polite" />
+        <!-- A Grid rather than a horizontal StackPanel: the status text needs a constrained,
+             star-sized column to wrap into, which a StackPanel — sized to its content's natural
+             width — will not give it. -->
+        <Grid Grid.Row="3" Margin="0,24,0,0" RowDefinitions="Auto, Auto" ColumnDefinitions="Auto, *">
+            <Border Grid.Row="0" Grid.Column="0" Grid.ColumnSpan="2"
+                    Margin="0,0,0,14"
+                    BorderThickness="0,1,0,0"
+                    BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}" />
+
+            <Ellipse Grid.Row="1" Grid.Column="0" Width="7" Height="7" Margin="0,2,8,0" VerticalAlignment="Top">
+                <Ellipse.Style>
+                    <Style TargetType="Ellipse">
+                        <Setter Property="Fill" Value="{DynamicResource TextFillColorTertiaryBrush}" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                                <Setter Property="Fill" Value="{DynamicResource SystemFillColorSuccessBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Ellipse.Style>
+            </Ellipse>
+
+            <!-- LiveSetting makes a screen reader announce status changes as they happen. Without
+                 it the line is readable only if the user goes looking for it, which defeats the
+                 point of a line whose whole job is to report what just happened. -->
+            <TextBlock Grid.Row="1" Grid.Column="1"
+                       Text="{Binding Status}"
+                       TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                       AutomationProperties.LiveSetting="Polite" />
+        </Grid>
     </Grid>
 </Window>

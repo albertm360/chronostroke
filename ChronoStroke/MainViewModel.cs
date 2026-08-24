@@ -131,6 +131,10 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     public bool HasStepError => StepError is not null;
 
+    /// <summary>Static description of the interval/step guard rails, shown under the boxes.</summary>
+    public string RangeHint =>
+        $"{MinIntervalMs}–{MaxIntervalMs:N0} ms, in steps of {MinStepMs}–{MaxStepMs:N0} ms";
+
     /// <summary>Settings are locked while the loop runs — the engine captured them at Start.</summary>
     public bool CanEdit => !IsRunning;
 
