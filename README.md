@@ -10,7 +10,7 @@ window currently has focus, at an interval you choose, started and stopped with 
 Single window, no background service, no telemetry, no network access of any kind.
 
 <img src="docs/screenshot.png" width="406"
-     alt="The ChronoStroke window in dark mode: a Key to send field showing X, a Start / stop hotkey field showing Ctrl+F8, an Interval field showing 300 milliseconds, and Start and Stop buttons.">
+     alt="The ChronoStroke window in dark mode: a Key to send field showing X, a Start / stop hotkey field showing Ctrl+F8 with a banner reporting it is already in use by another application, an Interval field showing 450 milliseconds with a Step of 100, and Start and Stop buttons.">
 
 ## Why this exists
 
