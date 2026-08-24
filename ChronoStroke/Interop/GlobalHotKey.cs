@@ -40,6 +40,14 @@ internal sealed class GlobalHotKey(IntPtr windowHandle) : IDisposable
             return false;
         }
 
+        if (combo.Modifiers == ModifierKeys.None && !IsSafeWithoutModifiers(combo.VirtualKey))
+        {
+            error = $"{combo.DisplayName} needs a modifier. A hotkey is taken by the system "
+                  + "before the focused window sees it, so on its own it would stop working "
+                  + "everywhere else while ChronoStroke is open.";
+            return false;
+        }
+
         if (!NativeMethods.RegisterHotKey(
                 windowHandle,
                 NativeMethods.HotKeyId,
@@ -70,6 +78,36 @@ internal sealed class GlobalHotKey(IntPtr windowHandle) : IDisposable
         _registered = false;
         Current = default;
     }
+
+    /// <summary>
+    /// True for the handful of keys that can be registered on their own without taking a key
+    /// the user needs for ordinary typing.
+    /// </summary>
+    /// <remarks>
+    /// A registered hotkey is consumed by the system rather than delivered to the focused
+    /// window, so a bare registration removes that key from every application on the machine
+    /// for as long as this app is open. Bind Space and the space bar stops working everywhere;
+    /// bind Enter and it is worse. It is recoverable — a different key still reaches the capture
+    /// box — but nothing on screen connects the cause to the effect while it lasts.
+    /// <para>
+    /// The obvious derivation, "does MapVirtualKeyW with MAPVK_VK_TO_CHAR return a printable
+    /// character", does not work. Measured on this machine: Space returns ' ' and Enter 0x0D and
+    /// Tab 0x09, so a printable-character test rejects them as whitespace or control characters
+    /// and lets all three through; the arrows, Home, Delete and Insert return 0, which is
+    /// exactly what F8 and Pause return. The call cannot separate the dangerous keys from the
+    /// safe ones, and it varies by keyboard layout besides.
+    /// </para>
+    /// <para>
+    /// So the safe set is named outright, and it fails closed: a key that is not on the list
+    /// needs a modifier. Being too strict costs the user one extra key press when choosing a
+    /// hotkey; being too loose costs them a key that no longer works anywhere.
+    /// </para>
+    /// </remarks>
+    internal static bool IsSafeWithoutModifiers(ushort vk) =>
+        vk is >= NativeMethods.VK_F1 and <= NativeMethods.VK_F24
+        || vk == NativeMethods.VK_PAUSE
+        || vk == NativeMethods.VK_SCROLL
+        || vk is >= NativeMethods.VK_BROWSER_BACK and <= NativeMethods.VK_LAUNCH_APP2;
 
     /// <summary>Maps WPF's modifier flags onto the MOD_* values RegisterHotKey expects.</summary>
     private static uint ToWin32Modifiers(ModifierKeys modifiers)
