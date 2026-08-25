@@ -54,6 +54,17 @@ Consult before writing code; do not rely on memory for Fluent theme setup or Win
 - **Add a `## [x.y.z]` section to `CHANGELOG.md` before tagging.** The release build fails
   without one, deliberately. Tags are `vX.Y.Z`; the workflow rejects any other shape.
 
+## Commits
+
+- **Conventional Commits** for commit subjects and PR titles: `<type>(<optional scope>): <description>`
+  — for example `fix(hotkey): require a registered hotkey before the loop can start`.
+- The subject takes the format; **the body stays prose.** The commit messages here record reasoning,
+  measurements and rejected alternatives, and that is worth more than any convention applied to them.
+- **No tool attribution anywhere** — no `Co-Authored-By` trailer, no "generated with" footer, no
+  mention of whatever wrote the change, in commit messages, PR bodies or files in the repo.
+- History before 2026-08-25 is free-form prose. The convention applies going forward; merged history
+  was deliberately left alone rather than rewritten for consistency.
+
 ## Branching
 - `main` is the only long-lived branch, and the only one that exists on the remote. This was
   gitflow until 1.2.0; `develop` was retired because a solo project got no benefit from a second
