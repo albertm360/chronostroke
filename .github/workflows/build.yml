@@ -46,8 +46,13 @@ jobs:
       # Publish rather than reusing the build output above: the thing worth trying
       # is the single-file self-contained exe people actually run, and that shape
       # only exists after publish.
+      #
+      # --no-build so the artifact is the assembly the tests just ran against
+      # rather than a second invocation of the compiler, and to match the test
+      # step above. The time saved is not the point: measured at 4.70s against
+      # 4.04s, since the incremental build was already skipping the compile.
       - name: Publish single-file executable
-        run: dotnet publish --configuration Release
+        run: dotnet publish --configuration Release --no-build
 
       - name: Upload the executable
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
