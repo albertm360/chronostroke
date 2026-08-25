@@ -88,8 +88,16 @@ jobs:
           git fetch --tags --quiet
           if (git tag --list $env:TAG) { throw "Tag $env:TAG already exists." }
 
+          # gh exits non-zero when the release does not exist, which is the expected
+          # case here — the failure is the answer, not a problem.
           gh release view $env:TAG 2>&1 | Out-Null
           if ($LASTEXITCODE -eq 0) { throw "A release for $env:TAG already exists." }
+
+          # And it has to be cleared. PowerShell hands $LASTEXITCODE to the runner as
+          # this step's own exit code, so gh's expected non-zero fails the step even
+          # though every check above it passed. This is the only step that expects a
+          # native command to fail, so it is the only one that needs this.
+          exit 0
 
       - name: Check the changelog describes this version
         shell: pwsh
