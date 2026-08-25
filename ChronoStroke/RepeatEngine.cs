@@ -25,6 +25,18 @@ internal sealed class RepeatEngine : IAsyncDisposable
     private CancellationTokenSource? _cts;
     private Task? _loop;
 
+    /// <summary>
+    /// How the loop sends a batch. Overridden by the tests; never reassigned by the app.
+    /// </summary>
+    /// <remarks>
+    /// The app's single most important safety property is that the key-up in RunAsync's finally
+    /// fires on every exit path, cancellation landing mid-hold included. Calling KeystrokeSender
+    /// directly left that verifiable only by injecting real keystrokes into the tester's desktop,
+    /// so it was not verified at all. Recording the batches instead makes the guarantee an
+    /// assertion — see RepeatEngineTests.
+    /// </remarks>
+    internal Func<NativeMethods.INPUT[], SendOutcome> Send { get; set; } = KeystrokeSender.Send;
+
     public bool IsRunning => _cts is not null;
 
     /// <summary>Raised when SendInput reports a failure. Fires on a thread-pool thread.</summary>
@@ -126,9 +138,9 @@ internal sealed class RepeatEngine : IAsyncDisposable
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(intervalMs));
             while (true)
             {
-                var pressed = KeystrokeSender.Send(down);
+                var pressed = Send(down);
                 await Task.Delay(hold, ct).ConfigureAwait(false);
-                var released = KeystrokeSender.Send(up);
+                var released = Send(up);
 
                 // Report a failure once rather than once per tick — a broken send fails every
                 // time, and 20 identical messages a second is noise, not information.
@@ -168,7 +180,7 @@ internal sealed class RepeatEngine : IAsyncDisposable
             // physically down as far as the target window is concerned, and leaving it that way
             // means a game holding an action forever. A key-up for a key that was never down is
             // harmless, so this is safe to send even on the paths that did not press anything.
-            KeystrokeSender.Send(up);
+            Send(up);
         }
     }
 
