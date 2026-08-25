@@ -5,6 +5,28 @@ using System.Windows.Input;
 namespace ChronoStroke.Interop;
 
 /// <summary>
+/// One system-wide hotkey registration, as <see cref="HotkeyBinder"/> needs it.
+/// </summary>
+/// <remarks>
+/// The seam exists so the register-fail-roll-back-re-register sequence can be tested. Registering
+/// for real needs a window handle and takes the key away from the whole machine while it lasts,
+/// so the alternative was leaving the subtlest state machine in the app uncovered — which is what
+/// happened until this existed. <see cref="GlobalHotKey"/> is the only implementation that ships.
+/// </remarks>
+internal interface IHotKeyRegistration : IDisposable
+{
+    /// <summary>The currently registered combination, if any.</summary>
+    KeyCombo Current { get; }
+
+    /// <summary>Registers <paramref name="combo"/>, replacing any existing registration.</summary>
+    /// <returns>True on success; otherwise false with <paramref name="error"/> explaining why.</returns>
+    bool TryRegister(KeyCombo combo, [NotNullWhen(false)] out string? error);
+
+    /// <summary>Drops the current registration, if there is one.</summary>
+    void Unregister();
+}
+
+/// <summary>
 /// Owns one system-wide hotkey registration for a window.
 /// </summary>
 /// <remarks>
@@ -12,7 +34,7 @@ namespace ChronoStroke.Interop;
 /// queue, and unregistering after the HWND is destroyed is pointless. In practice the window
 /// disposes this during OnClosing, while its handle is still valid.
 /// </remarks>
-internal sealed class GlobalHotKey(IntPtr windowHandle) : IDisposable
+internal sealed class GlobalHotKey(IntPtr windowHandle) : IHotKeyRegistration
 {
     private bool _registered;
 

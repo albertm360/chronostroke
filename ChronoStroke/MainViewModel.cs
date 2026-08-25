@@ -34,16 +34,6 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// </summary>
     private readonly Dispatcher _dispatcher = Dispatcher.CurrentDispatcher;
 
-    private GlobalHotKey? _hotKey;
-
-    /// <summary>Last combination that registered successfully — the target to revert to.</summary>
-    private KeyCombo _lastGoodHotkey;
-
-    /// <summary>Guards against re-entering ApplyHotkey when a failure reverts the property.</summary>
-    private bool _applyingHotkey;
-
-    private string? _hotkeyRegistrationError;
-
     /// <summary>What is currently on disk, so an unchanged configuration is not rewritten.</summary>
     private AppSettings? _lastSaved;
 
@@ -60,6 +50,9 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     /// <summary>How far each press of an interval arrow moves it.</summary>
     public BoundedIntField Step { get; } = CreateStepField();
+
+    /// <summary>The start/stop hotkey, and whether anything is listening for it.</summary>
+    public HotkeyBinder Hotkey { get; } = new();
 
     /// <summary>
     /// The two boxes, configured. Static so the tests can exercise the real bounds and the real
@@ -98,11 +91,24 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             StepDownCommand.NotifyCanExecuteChanged();
         };
 
+        // The hotkey feeds three things the view model owns: the error shown under the box, which
+        // combines with the collision check; the same-key warning; and whether Start is allowed
+        // to run at all, which needs a registration to exist.
+        Hotkey.Changed += (_, _) =>
+        {
+            SaveSettings();
+            NotifyHotkeyDependents();
+        };
+
+        // A rejection that was rolled back. The box has already gone back to showing the old
+        // combination, so this belongs in the status line rather than under the box.
+        Hotkey.Rejected += (_, message) => Status = message;
+
         // The loop runs on the thread pool, so these arrive off the UI thread.
         _engine.SendFailed += (_, message) => OnUiThread(() => Status = message);
         _engine.WaitingForReleaseChanged += (_, waiting) => OnUiThread(() =>
             Status = waiting
-                ? $"Waiting for you to let go of {HotkeyCombo.DisplayName}…"
+                ? $"Waiting for you to let go of {Hotkey.Combo.DisplayName}…"
                 : RunningStatus());
 
         ApplySettings(SettingsStore.Load());
@@ -118,6 +124,20 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         StartCommand.NotifyCanExecuteChanged();
         StepUpCommand.NotifyCanExecuteChanged();
         StepDownCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// What the hotkey governs beyond itself. The error and the warning are both this view
+    /// model's, because each combines the hotkey with the key being sent — something neither the
+    /// binder nor the capture box can see on its own.
+    /// </summary>
+    private void NotifyHotkeyDependents()
+    {
+        OnPropertyChanged(nameof(HotkeyError));
+        OnPropertyChanged(nameof(HasHotkeyError));
+        OnPropertyChanged(nameof(HotkeyWarning));
+        OnPropertyChanged(nameof(HasHotkeyWarning));
+        StartCommand.NotifyCanExecuteChanged();
     }
 
     private void OnUiThread(Action action)
@@ -143,12 +163,6 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     public partial KeyCombo SendCombo { get; set; }
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HotkeyError), nameof(HasHotkeyError))]
-    [NotifyPropertyChangedFor(nameof(HotkeyWarning), nameof(HasHotkeyWarning))]
-    [NotifyCanExecuteChangedFor(nameof(StartCommand))]
-    public partial KeyCombo HotkeyCombo { get; set; }
-
-    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanEdit))]
     [NotifyCanExecuteChangedFor(nameof(StartCommand), nameof(StopCommand))]
     [NotifyCanExecuteChangedFor(nameof(StepUpCommand), nameof(StepDownCommand))]
@@ -170,11 +184,11 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// would fight itself. Blocking is kinder than letting it misbehave inexplicably.
     /// </summary>
     private string? CollisionError =>
-        !SendCombo.IsEmpty && SendCombo == HotkeyCombo
+        !SendCombo.IsEmpty && SendCombo == Hotkey.Combo
             ? "The hotkey must differ from the key being sent, or the repeated keystroke will trigger it."
             : null;
 
-    public string? HotkeyError => CollisionError ?? _hotkeyRegistrationError;
+    public string? HotkeyError => CollisionError ?? Hotkey.Error;
 
     public bool HasHotkeyError => HotkeyError is not null;
 
@@ -187,9 +201,9 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// start; nothing can cover the middle, so the honest answer is to say so up front.
     /// </summary>
     public string? HotkeyWarning =>
-        CollisionError is null && !SendCombo.IsEmpty && !HotkeyCombo.IsEmpty
-        && SendCombo.VirtualKey == HotkeyCombo.VirtualKey
-            ? $"{HotkeyCombo.DisplayName} and {SendCombo.DisplayName} are the same key with "
+        CollisionError is null && !SendCombo.IsEmpty && !Hotkey.Combo.IsEmpty
+        && SendCombo.VirtualKey == Hotkey.Combo.VirtualKey
+            ? $"{Hotkey.Combo.DisplayName} and {SendCombo.DisplayName} are the same key with "
               + "different modifiers. Holding a modifier while the loop runs can turn the "
               + "repeated keystroke into the hotkey and stop it."
             : null;
@@ -204,7 +218,7 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         try
         {
             SendCombo = settings.SendCombo;
-            HotkeyCombo = settings.HotkeyCombo;
+            Hotkey.Combo = settings.HotkeyCombo;
 
             // Clamp rather than trust. The file is plain text in a folder the user can open, so
             // a hand-edited 1 ms interval must not slip past the guard rail the UI enforces.
@@ -224,7 +238,7 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         // What is now on screen, so the first edit is compared against it rather than written
         // back unchanged.
-        _lastSaved = AppSettings.From(SendCombo, HotkeyCombo, Interval.LastValid, Step.LastValid);
+        _lastSaved = AppSettings.From(SendCombo, Hotkey.Combo, Interval.LastValid, Step.LastValid);
     }
 
     /// <summary>
@@ -238,7 +252,7 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
-        var settings = AppSettings.From(SendCombo, HotkeyCombo, Interval.LastValid, Step.LastValid);
+        var settings = AppSettings.From(SendCombo, Hotkey.Combo, Interval.LastValid, Step.LastValid);
 
         // The interval box updates its binding on every keystroke, so typing "250" arrives here
         // three times and half-typed values like "2" arrive as invalid ones. Comparing against
@@ -265,76 +279,10 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     // ------------------------------------------------------------------ hotkey
 
     /// <summary>
-    /// Called once the window has an HWND. RegisterHotKey needs a real handle, which does not
-    /// exist until the window is sourced.
+    /// Called once the window has an HWND. RegisterHotKey needs a real handle, which does
+    /// not exist until the window is sourced.
     /// </summary>
-    public void AttachWindow(IntPtr windowHandle)
-    {
-        _hotKey = new GlobalHotKey(windowHandle);
-        ApplyHotkey();
-    }
-
-    partial void OnHotkeyComboChanged(KeyCombo value)
-    {
-        ApplyHotkey();
-        SaveSettings();
-    }
-
-    private void ApplyHotkey()
-    {
-        if (_hotKey is null || _applyingHotkey)
-        {
-            return;
-        }
-
-        _applyingHotkey = true;
-        try
-        {
-            if (_hotKey.TryRegister(HotkeyCombo, out var error))
-            {
-                _lastGoodHotkey = HotkeyCombo;
-                _hotkeyRegistrationError = null;
-            }
-            else
-            {
-                _hotkeyRegistrationError = error;
-
-                // Roll back to whatever last worked and put that registration back in place, so
-                // a rejected choice never leaves the app with no working hotkey at all.
-                if (!_lastGoodHotkey.IsEmpty && _lastGoodHotkey != HotkeyCombo)
-                {
-                    HotkeyCombo = _lastGoodHotkey;
-                    if (_hotKey.TryRegister(_lastGoodHotkey, out _))
-                    {
-                        // The box has just gone back to showing the old combination, so leaving
-                        // the error in place would park a permanent-looking complaint about
-                        // Ctrl+Shift+P directly beneath a box reading Ctrl+F8. The rejection is
-                        // still worth saying — once, in the status line, where messages are
-                        // understood to be about what just happened rather than about the
-                        // current state.
-                        _hotkeyRegistrationError = null;
-                        Status = error;
-                    }
-                }
-
-                // If there is nothing to roll back to — first launch with the default hotkey
-                // already taken — the app ends up with no hotkey registered at all. The box
-                // keeps showing the rejected combination and the error stays under it, which is
-                // the honest description of where things stand: nothing is listening. Start
-                // disables itself in that state; see CanStart for why it has to.
-            }
-        }
-        finally
-        {
-            _applyingHotkey = false;
-            OnPropertyChanged(nameof(HotkeyError));
-            OnPropertyChanged(nameof(HasHotkeyError));
-            OnPropertyChanged(nameof(HotkeyWarning));
-            OnPropertyChanged(nameof(HasHotkeyWarning));
-            StartCommand.NotifyCanExecuteChanged();
-        }
-    }
-
+    public void AttachWindow(IntPtr windowHandle) => Hotkey.Attach(new GlobalHotKey(windowHandle));
 
     // ------------------------------------------------------------------ commands
 
@@ -360,7 +308,7 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// </summary>
     private bool CanStart =>
         !IsRunning && !SendCombo.IsEmpty && !Interval.HasError && CollisionError is null
-        && _hotKey?.Current.IsEmpty == false;
+        && Hotkey.IsRegistered;
 
     [RelayCommand(CanExecute = nameof(CanStart))]
     private void Start()
@@ -371,7 +319,7 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
 
         // Passing the hotkey lets the engine hold off until you have let go of it.
-        _engine.Start(SendCombo, Interval.ValueOrLastValid, HotkeyCombo);
+        _engine.Start(SendCombo, Interval.ValueOrLastValid, Hotkey.Combo);
         IsRunning = true;
         Status = RunningStatus();
     }
@@ -411,9 +359,9 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private string RunningStatus()
     {
         var interval = Interval.ValueOrLastValid;
-        return HotkeyCombo.IsEmpty
+        return Hotkey.Combo.IsEmpty
             ? $"Running — {SendCombo.DisplayName} every {interval} ms."
-            : $"Running — {SendCombo.DisplayName} every {interval} ms. {HotkeyCombo.DisplayName} to stop.";
+            : $"Running — {SendCombo.DisplayName} every {interval} ms. {Hotkey.Combo.DisplayName} to stop.";
     }
 
     /// <summary>
@@ -427,8 +375,7 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// </remarks>
     public async ValueTask DisposeAsync()
     {
-        _hotKey?.Dispose();
-        _hotKey = null;
+        Hotkey.Dispose();
 
         await _engine.DisposeAsync().ConfigureAwait(true);
 
