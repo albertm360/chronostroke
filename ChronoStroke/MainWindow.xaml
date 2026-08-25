@@ -81,7 +81,7 @@
                        Text="Click the box, then press the key or combination you want repeated. Esc leaves the box." />
 
             <TextBlock x:Name="HotkeyLabel" Style="{StaticResource FieldLabelStyle}" Text="Start / stop hotkey" Margin="0,18,0,6" />
-            <local:KeyCaptureBox Combo="{Binding HotkeyCombo}" IsEnabled="{Binding CanEdit}"
+            <local:KeyCaptureBox Combo="{Binding Hotkey.Combo}" IsEnabled="{Binding CanEdit}"
                                  AutomationProperties.LabeledBy="{Binding ElementName=HotkeyLabel}" />
             <Border Margin="0,8,0,0"
                     Style="{StaticResource BannerStyle}"
