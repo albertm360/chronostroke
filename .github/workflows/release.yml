@@ -29,10 +29,14 @@ on:
 permissions:
   contents: read
 
-# Belt and braces against two runs racing for the same version — the second would
-# find the tag taken and fail halfway through publishing.
+# One release at a time, whatever version it is for. Keying this on the version
+# looks tighter but is not: the input is accepted as either "1.4.0" or "v1.4.0",
+# so the two forms produce different group names while racing for the same tag —
+# and the tag check cannot catch it, because the tag is deliberately created last.
+# Both runs would pass the check, both would build, and one would fail at the end.
+# Releases are rare enough that serialising all of them costs nothing.
 concurrency:
-  group: release-${{ inputs.version || github.ref_name }}
+  group: release
   cancel-in-progress: false
 
 jobs:
