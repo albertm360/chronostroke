@@ -481,5 +481,8 @@ $RECYCLE.BIN/
 # Vim temporary swap files
 *.swp
 
-# Claude Code local session state
-.claude/
+# Claude Code local session state. Only the machine-local file: .claude/agents/
+# holds project assets — reviewers written for this repo, useful to anyone who
+# clones it — and ignoring the whole directory quietly kept them out of the
+# repository along with it.
+.claude/settings.local.json
