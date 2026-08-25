@@ -55,7 +55,12 @@ jobs:
           # The commit is in the name because the version inside the exe is not a
           # reliable answer here: the csproj carries a development placeholder and
           # only release.yml stamps the real one from the tag.
-          name: ChronoStroke-${{ github.sha }}
+          #
+          # head.sha rather than github.sha, which on a pull request is the synthetic
+          # merge commit GitHub builds for the run — a SHA that is not in anyone's
+          # history and cannot be checked out, which defeats the point of naming the
+          # file after it. On a push there is no pull_request and it falls through.
+          name: ChronoStroke-${{ github.event.pull_request.head.sha || github.sha }}
           path: ChronoStroke/bin/Release/net10.0-windows/win-x64/publish/ChronoStroke.exe
           # Throwaway test builds, not archives. The 90-day default would keep 61 MB
           # per run long after the commit stopped being interesting.
