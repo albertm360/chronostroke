@@ -21,16 +21,25 @@ internal static class SettingsStore
     /// A missing, unreadable, truncated or hand-mangled file must never stop the app from
     /// opening — there is no UI to fix it from if it will not start.
     /// </remarks>
-    public static AppSettings Load()
+    public static AppSettings Load() => Load(FilePath);
+
+    /// <inheritdoc cref="Load()"/>
+    /// <remarks>
+    /// The path-taking overload exists so the tests can exercise the fallbacks against a temp
+    /// directory. FilePath is resolved once from the real %AppData%, so a round trip through the
+    /// parameterless version would overwrite the settings of whoever ran the tests — which is
+    /// why the corrupt-file and atomic-write paths went uncovered until this existed.
+    /// </remarks>
+    internal static AppSettings Load(string path)
     {
         try
         {
-            if (!File.Exists(FilePath))
+            if (!File.Exists(path))
             {
                 return AppSettings.Default;
             }
 
-            var json = File.ReadAllText(FilePath);
+            var json = File.ReadAllText(path);
             return JsonSerializer.Deserialize(json, AppSettingsContext.Default.AppSettings)
                    ?? AppSettings.Default;
         }
@@ -48,18 +57,22 @@ internal static class SettingsStore
     }
 
     /// <returns>Null on success, otherwise a description of what failed.</returns>
-    public static string? Save(AppSettings settings)
+    public static string? Save(AppSettings settings) => Save(settings, FilePath);
+
+    /// <inheritdoc cref="Save(AppSettings)"/>
+    /// <remarks>See <see cref="Load(string)"/> for why the path-taking overload exists.</remarks>
+    internal static string? Save(AppSettings settings, string path)
     {
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 
             // Write to a sibling file and swap it in. A crash or a full disk partway through
             // then leaves the previous good settings.json intact rather than a half-written one
             // that fails to parse on next launch.
-            var temp = FilePath + ".tmp";
+            var temp = path + ".tmp";
             File.WriteAllText(temp, JsonSerializer.Serialize(settings, AppSettingsContext.Default.AppSettings));
-            File.Move(temp, FilePath, overwrite: true);
+            File.Move(temp, path, overwrite: true);
             return null;
         }
         // Save runs from a property-changed handler, which runs from a binding setter, which
