@@ -49,10 +49,19 @@ Consult before writing code; do not rely on memory for Fluent theme setup or Win
   silently at runtime rather than at compile time.
 - Ship target: `dotnet publish -c Release`. The runtime identifier, self-contained and
   single-file settings all live in the csproj, so the bare command produces the shippable exe.
-- Releases are cut from tags, not built by hand. `release.yml` builds the tag, stamps the version
-  from it and publishes the GitHub release; `build.yml` validates every push and pull request.
-- **Add a `## [x.y.z]` section to `CHANGELOG.md` before tagging.** The release build fails
-  without one, deliberately. Tags are `vX.Y.Z`; the workflow rejects any other shape.
+- **Cut a release from the Actions tab.** Run the Release workflow and give it a version such as
+  `1.4.0`. It validates the changelog, builds, and creates the tag *last* — so a release that is
+  not ready to go out costs nothing to abandon. `release.yml` stamps the version into the exe,
+  checksums it and publishes the GitHub release.
+- Pushing a `vX.Y.Z` tag by hand still works and runs the same job. Prefer the Actions tab: a
+  hand-pushed tag is the permanent record put in place *before* anything has been checked, so a
+  missing changelog section leaves a tag pointing at a release that was never published, to be
+  deleted locally and on the remote before trying again.
+- **Add a `## [x.y.z]` section to `CHANGELOG.md` before releasing.** The workflow fails without
+  one, deliberately, and checks before it builds. Tags are `vX.Y.Z`; any other shape is rejected.
+- `build.yml` validates every push and pull request, and attaches the published exe to the run.
+  Grab that to try a change out — releases are for users, who have to download and replace the
+  binary by hand, so they should be worth asking for.
 
 ## Commits
 
@@ -69,11 +78,13 @@ Consult before writing code; do not rely on memory for Fluent theme setup or Win
 - `main` is the only long-lived branch, and the only one that exists on the remote. This was
   gitflow until 1.2.0; `develop` was retired because a solo project got no benefit from a second
   permanent branch that had to be kept in sync with the first one by hand.
-- Work happens on a short-lived branch — `feature/…`, or `fix/…` — which merges back into `main`
-  with `--no-ff` and is then deleted, locally and on the remote. The merge commit is what keeps
-  a feature legible as one unit in the log after its branch is gone.
-- Releases are tagged directly on `main`; there is no release branch. Tag the merge commit that
-  finishes the release, and push the tag to publish.
+- Work happens on a short-lived branch — `feature/…`, `fix/…`, `ci/…`, `chore/…`, `docs/…` —
+  which reaches `main` through a pull request, with CI green before it merges. Merge with a merge
+  commit rather than squashing (`gh pr merge --merge --delete-branch`), and let the branch go on
+  both sides. The merge commit is what keeps a change legible as one unit in the log after its
+  branch is gone.
+- Releases are tagged on `main`; there is no release branch. See **Build, test & release** above
+  for how to cut one — do not tag by hand out of habit.
 - Dependabot is configured in `.github/dependabot.yml` with no `target-branch`, so it aims at the
   default branch, `main`. Dependabot reads that file from the default branch only, so a change to
   it has no effect until it lands there.
