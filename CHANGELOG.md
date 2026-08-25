@@ -11,6 +11,36 @@ Add the section before tagging.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-08-25
+
+Three safety fixes from a full architecture review of the repository. All three are things you
+could hit in normal use, and two of them change what the app will let you do.
+
+### Fixed
+
+- **Stopping the loop in the instant after starting it could close the app** with the unexpected
+  error dialog. The cancellation signal was read on the wrong thread, late enough that a stop
+  arriving first left nothing to read. No keystroke was ever left held down by this — the loop
+  had not begun — but the app went down with it.
+- **Start now refuses to run without a working stop hotkey.** If the hotkey cannot be registered
+  — most likely on a first launch where another application already holds `Ctrl+F8` — the loop
+  could previously still be started, and the only way to stop it was to reach this window with
+  the mouse while the app typed into whatever had focus. Start is now disabled until a hotkey
+  registers, with the reason shown above it.
+- **A key you need for typing can no longer be made the hotkey on its own.** Windows gives a
+  registered hotkey to the app that claimed it rather than to the window you are working in, so
+  binding a bare `Space` stopped the space bar working everywhere until ChronoStroke was closed.
+  `Enter`, `Tab`, `Esc`, the arrows, `Delete` and ordinary letters and digits behaved the same
+  way. These now need a modifier; `F1`–`F24`, `Pause`, `Scroll Lock` and the media keys are
+  still accepted on their own, so a bare `F8` remains a valid choice when `Ctrl+F8` is taken.
+
+### Changed
+
+- Every push and pull request now leaves a downloadable build attached to its CI run, so a change
+  can be tried out without publishing a release to everyone. Releases can also be started from
+  the Actions tab, which checks the changelog and builds before creating the tag rather than
+  after it.
+
 ## [1.3.0] - 2026-08-24
 
 ### Changed
@@ -99,7 +129,8 @@ repository. Three of the fixes below are things you could hit in normal use.
   configurable interval, toggled with a global hotkey. Scan-code injection through `SendInput`,
   settings persisted between runs, and a Fluent UI that follows the system light/dark theme.
 
-[Unreleased]: https://github.com/albertm360/chronostroke/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/albertm360/chronostroke/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/albertm360/chronostroke/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/albertm360/chronostroke/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/albertm360/chronostroke/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/albertm360/chronostroke/compare/v1.0.0...v1.1.0

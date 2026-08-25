@@ -36,3 +36,35 @@ jobs:
 
       - name: Test
         run: dotnet test --configuration Release --no-build
+
+      # A downloadable build for every push and pull request, so trying a change
+      # out on the machine does not require cutting a release. Releases are for
+      # users, who have to find the page, clear SmartScreen and replace their copy
+      # by hand; these are for me. Without them the only way to get a binary was to
+      # publish one publicly, which is what makes releasing every merge tempting.
+      #
+      # Publish rather than reusing the build output above: the thing worth trying
+      # is the single-file self-contained exe people actually run, and that shape
+      # only exists after publish.
+      - name: Publish single-file executable
+        run: dotnet publish --configuration Release
+
+      - name: Upload the executable
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          # The commit is in the name because the version inside the exe is not a
+          # reliable answer here: the csproj carries a development placeholder and
+          # only release.yml stamps the real one from the tag.
+          #
+          # head.sha rather than github.sha, which on a pull request is the synthetic
+          # merge commit GitHub builds for the run — a SHA that is not in anyone's
+          # history and cannot be checked out, which defeats the point of naming the
+          # file after it. On a push there is no pull_request and it falls through.
+          name: ChronoStroke-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ChronoStroke/bin/Release/net10.0-windows/win-x64/publish/ChronoStroke.exe
+          # Throwaway test builds, not archives. The 90-day default would keep 61 MB
+          # per run long after the commit stopped being interesting.
+          retention-days: 14
+          # A silent empty artifact would be worse than a failure — it looks like a
+          # successful build you can download, right up until you try.
+          if-no-files-found: error

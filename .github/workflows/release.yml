@@ -1,15 +1,39 @@
 name: Release
 
-# Publishing is driven by tags: push v1.0.0 and this builds it and creates the
-# matching GitHub release. Nothing runs on ordinary pushes to main.
+# Two ways in, one path out.
+#
+#   * Run this workflow from the Actions tab and give it a version. It validates
+#     the changelog, builds, and creates the tag last.
+#   * Push a vX.Y.Z tag by hand. The same job, minus the tag creation.
+#
+# The first is the one to reach for. Tagging by hand puts the permanent record in
+# place before anything has been checked, so a missing changelog section leaves a
+# tag pointing at a release that was never published — which then has to be
+# deleted locally and on the remote before you can try again. Running it from the
+# Actions tab cannot get into that state: nothing is tagged until the changelog
+# has been found and the build has succeeded.
+#
+# Nothing runs on ordinary pushes to main.
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, without the leading v (e.g. 1.4.0)"
+        required: true
+        type: string
 
 # Read-only by default; the one job that needs to write says so for itself.
 permissions:
   contents: read
+
+# Belt and braces against two runs racing for the same version — the second would
+# find the tag taken and fail halfway through publishing.
+concurrency:
+  group: release-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -18,15 +42,87 @@ jobs:
     timeout-minutes: 20
 
     permissions:
-      # Needed to create the release and upload the executable to it.
+      # Needed to create the release, upload the executable to it, and push the tag
+      # on the workflow_dispatch path.
       contents: write
 
     steps:
       # Actions are pinned to commit SHAs rather than tags. A tag can be moved
       # to point at different code after the fact; a SHA cannot. The bumps come
       # from Dependabot, configured in .github/dependabot.yml.
-      - name: Check out the tag
+      # The tag on the push path; the default branch on the dispatch path, which is
+      # what the new tag will end up pointing at.
+      - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # One version for the rest of the job regardless of which trigger supplied it,
+      # so no later step has to know how it was started.
+      - name: Resolve the version
+        shell: pwsh
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $version = if ($env:INPUT_VERSION) { $env:INPUT_VERSION.Trim() } else { $env:REF_NAME }
+
+          # A leading v is accepted from either source and normalised away, so typing
+          # "v1.4.0" into the Actions tab does not produce a vv1.4.0 tag.
+          $version = $version -replace '^v', ''
+
+          if ($version -notmatch '^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$') {
+              throw "'$version' is not <major>.<minor>.<patch>[-prerelease]"
+          }
+
+          "VERSION=$version" | Out-File -Append $env:GITHUB_ENV -Encoding utf8
+          "TAG=v$version" | Out-File -Append $env:GITHUB_ENV -Encoding utf8
+          Write-Output "Releasing $version"
+
+      - name: Check the version is not already taken
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Now rather than at the end: colliding after the build would waste it, and
+          # the whole point of the dispatch path is that a failed attempt costs nothing.
+          git fetch --tags --quiet
+          if (git tag --list $env:TAG) { throw "Tag $env:TAG already exists." }
+
+          gh release view $env:TAG 2>&1 | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw "A release for $env:TAG already exists." }
+
+      - name: Check the changelog describes this version
+        shell: pwsh
+        run: |
+          # Deliberately ahead of the build, and on both paths. A release that cannot
+          # say what changed in it is not ready to go out, and the only fix is to write
+          # the section — which is the point. Finding that out after a two-minute
+          # publish, or worse after the tag exists, is the failure this ordering removes.
+          $lines = Get-Content CHANGELOG.md
+          $start = -1
+          $end = $lines.Count
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+              if ($lines[$i] -match "^##\s+\[$([regex]::Escape($env:VERSION))\]") {
+                  $start = $i + 1
+                  continue
+              }
+              if ($start -ge 0 -and $lines[$i] -match '^##\s+\[') {
+                  $end = $i
+                  break
+              }
+          }
+          if ($start -lt 0) {
+              throw "CHANGELOG.md has no '## [$($env:VERSION)]' section. Add one and run this again."
+          }
+
+          $changelog = ($lines[$start..($end - 1)] -join "`n").Trim()
+          if (-not $changelog) {
+              throw "The '## [$($env:VERSION)]' section in CHANGELOG.md is empty."
+          }
+
+          # Handed to the release step as a file so the notes are extracted exactly once.
+          $changelog | Out-File changelog-section.md -Encoding utf8
+          Write-Output "Found $($changelog.Split("`n").Count) lines of release notes."
 
       - name: Set up .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
@@ -36,23 +132,17 @@ jobs:
       - name: Publish single-file executable
         # RuntimeIdentifier, self-contained and single-file all live in the
         # csproj, so the command only has to supply the version. That comes from
-        # the tag: the csproj's <Version> is a development placeholder, and
-        # without this the shipped exe reports it no matter what was tagged.
+        # the resolved version above: the csproj's <Version> is a development
+        # placeholder, and without this the shipped exe reports it no matter what
+        # was released.
         #
         # There is no separate build step. Publish compiles anyway, so building
         # first only doubled the work — and did it without the version, which is
         # how the two drifted apart in the first place.
         shell: pwsh
-        env:
-          TAG: ${{ github.ref_name }}
         run: |
-          if ($env:TAG -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$') {
-              throw "Tag '$($env:TAG)' is not v<major>.<minor>.<patch>[-prerelease]"
-          }
-
-          $version = $env:TAG -replace '^v', ''
-          Write-Output "Building version $version"
-          dotnet publish --configuration Release -p:Version=$version -p:ContinuousIntegrationBuild=true
+          Write-Output "Building version $($env:VERSION)"
+          dotnet publish --configuration Release -p:Version=$env:VERSION -p:ContinuousIntegrationBuild=true
 
       - name: Stage the artifact and checksum it
         shell: pwsh
@@ -73,41 +163,30 @@ jobs:
           Write-Output "sha256  $hash"
           "SHA256=$hash" | Out-File -Append $env:GITHUB_ENV -Encoding utf8
 
+      # Last, and only now. A tag is the permanent record of a release, so it should
+      # not exist until there is one to point at: the changelog has been found and
+      # the build has succeeded. Pushing with GITHUB_TOKEN deliberately does not
+      # retrigger this workflow's own push-on-tag trigger — see
+      # https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow
+      - name: Create the tag
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a $env:TAG -m "ChronoStroke $($env:VERSION)"
+          git push origin $env:TAG
+
       - name: Create the release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           COMMIT: ${{ github.sha }}
-          TAG: ${{ github.ref_name }}
         run: |
-          $version = $env:TAG -replace '^v', ''
-
-          # Lift this version's section out of CHANGELOG.md: everything between
-          # its heading and the next one. Failing here is deliberate — a release
-          # that cannot say what changed in it is not ready to go out, and the
-          # only fix is to write the section, which is the point.
-          $lines = Get-Content CHANGELOG.md
-          $start = -1
-          $end = $lines.Count
-          for ($i = 0; $i -lt $lines.Count; $i++) {
-              if ($lines[$i] -match "^##\s+\[$([regex]::Escape($version))\]") {
-                  $start = $i + 1
-                  continue
-              }
-              if ($start -ge 0 -and $lines[$i] -match '^##\s+\[') {
-                  $end = $i
-                  break
-              }
-          }
-          if ($start -lt 0) {
-              throw "CHANGELOG.md has no '## [$version]' section. Add one and re-tag."
-          }
-
-          $changelog = ($lines[$start..($end - 1)] -join "`n").Trim()
-          if (-not $changelog) {
-              throw "The '## [$version]' section in CHANGELOG.md is empty."
-          }
+          # Extracted and validated before the build; read back here rather than
+          # parsed a second time.
+          $changelog = (Get-Content changelog-section.md -Raw).Trim()
 
           # Notes live in a template file so this step stays free of nested
           # quoting between YAML, PowerShell and Markdown.
@@ -121,6 +200,6 @@ jobs:
           gh release create $env:TAG `
             artifacts/ChronoStroke.exe `
             artifacts/ChronoStroke.exe.sha256 `
-            --title "ChronoStroke $version" `
+            --title "ChronoStroke $($env:VERSION)" `
             --notes-file release-notes.md `
             --verify-tag
