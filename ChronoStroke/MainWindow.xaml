@@ -126,7 +126,7 @@
                          other three sides keep the theme's 10,5,_,6 so the digits line up with
                          the Step box alongside. -->
                     <Grid>
-                        <TextBox Text="{Binding IntervalText, UpdateSourceTrigger=PropertyChanged}"
+                        <TextBox Text="{Binding Interval.Text, UpdateSourceTrigger=PropertyChanged}"
                                  IsEnabled="{Binding CanEdit}"
                                  Padding="10,5,34,6"
                                  AutomationProperties.LabeledBy="{Binding ElementName=IntervalLabel}">
@@ -161,7 +161,7 @@
 
                 <StackPanel Grid.Column="1" Width="96" Margin="12,0,0,0">
                     <TextBlock x:Name="StepLabel" Style="{StaticResource FieldLabelStyle}" Text="Step (ms)" Margin="0,0,0,6" />
-                    <TextBox Text="{Binding StepText, UpdateSourceTrigger=PropertyChanged}"
+                    <TextBox Text="{Binding Step.Text, UpdateSourceTrigger=PropertyChanged}"
                              IsEnabled="{Binding CanEdit}"
                              AutomationProperties.LabeledBy="{Binding ElementName=StepLabel}" />
                 </StackPanel>
@@ -175,27 +175,27 @@
             <Border Margin="0,8,0,0"
                     Style="{StaticResource BannerStyle}"
                     Background="{DynamicResource SystemFillColorCriticalBackgroundBrush}"
-                    Visibility="{Binding HasIntervalError, Converter={StaticResource BoolToVis}}">
+                    Visibility="{Binding Interval.HasError, Converter={StaticResource BoolToVis}}">
                 <Grid ColumnDefinitions="Auto, *">
                     <TextBlock Grid.Column="0" Margin="0,0,8,0" FontSize="13"
                                Foreground="{DynamicResource SystemFillColorCriticalBrush}"
                                Text="&#x2297;" />
                     <TextBlock Grid.Column="1" FontSize="12.5" TextWrapping="Wrap"
                                Foreground="{DynamicResource SystemFillColorCriticalBrush}"
-                               Text="{Binding IntervalError}" />
+                               Text="{Binding Interval.Error}" />
                 </Grid>
             </Border>
             <Border Margin="0,8,0,0"
                     Style="{StaticResource BannerStyle}"
                     Background="{DynamicResource SystemFillColorCriticalBackgroundBrush}"
-                    Visibility="{Binding HasStepError, Converter={StaticResource BoolToVis}}">
+                    Visibility="{Binding Step.HasError, Converter={StaticResource BoolToVis}}">
                 <Grid ColumnDefinitions="Auto, *">
                     <TextBlock Grid.Column="0" Margin="0,0,8,0" FontSize="13"
                                Foreground="{DynamicResource SystemFillColorCriticalBrush}"
                                Text="&#x2297;" />
                     <TextBlock Grid.Column="1" FontSize="12.5" TextWrapping="Wrap"
                                Foreground="{DynamicResource SystemFillColorCriticalBrush}"
-                               Text="{Binding StepError}" />
+                               Text="{Binding Step.Error}" />
                 </Grid>
             </Border>
 
