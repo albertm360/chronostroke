@@ -44,12 +44,6 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     private string? _hotkeyRegistrationError;
 
-    /// <summary>Last interval the box held that parsed and passed the guard rails.</summary>
-    private int _lastValidIntervalMs = AppSettings.Default.IntervalMs;
-
-    /// <summary>Same, for the step box.</summary>
-    private int _lastValidStepMs = AppSettings.Default.IntervalStepMs;
-
     /// <summary>What is currently on disk, so an unchanged configuration is not rewritten.</summary>
     private AppSettings? _lastSaved;
 
@@ -61,8 +55,49 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     private long _lastToggleTicks;
 
+    /// <summary>The interval box, its bounds and the last usable value it held.</summary>
+    public BoundedIntField Interval { get; } = CreateIntervalField();
+
+    /// <summary>How far each press of an interval arrow moves it.</summary>
+    public BoundedIntField Step { get; } = CreateStepField();
+
+    /// <summary>
+    /// The two boxes, configured. Static so the tests can exercise the real bounds and the real
+    /// messages without constructing a view model — whose constructor loads settings from the
+    /// user's own %AppData%.
+    /// </summary>
+    internal static BoundedIntField CreateIntervalField() => new(
+        MinIntervalMs,
+        MaxIntervalMs,
+        AppSettings.Default.IntervalMs,
+        $"Minimum is {MinIntervalMs} ms — faster than that floods the input queue.",
+        $"Maximum is {MaxIntervalMs:N0} ms.");
+
+    /// <inheritdoc cref="CreateIntervalField"/>
+    internal static BoundedIntField CreateStepField()
+    {
+        // One message for both ends: the step has no reason to give beyond the range itself,
+        // where the interval's floor has the input queue to explain.
+        var outOfRange = $"Step must be between {MinStepMs} and {MaxStepMs:N0} ms.";
+        return new BoundedIntField(
+            MinStepMs, MaxStepMs, AppSettings.Default.IntervalStepMs, outOfRange, outOfRange);
+    }
+
     public MainViewModel()
     {
+        // Typing in either box saves, and moves the guard rails the spinner arrows disable at.
+        Interval.Changed += (_, _) =>
+        {
+            SaveSettings();
+            NotifyIntervalDependents();
+        };
+        Step.Changed += (_, _) =>
+        {
+            SaveSettings();
+            StepUpCommand.NotifyCanExecuteChanged();
+            StepDownCommand.NotifyCanExecuteChanged();
+        };
+
         // The loop runs on the thread pool, so these arrive off the UI thread.
         _engine.SendFailed += (_, message) => OnUiThread(() => Status = message);
         _engine.WaitingForReleaseChanged += (_, waiting) => OnUiThread(() =>
@@ -71,6 +106,18 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 : RunningStatus());
 
         ApplySettings(SettingsStore.Load());
+    }
+
+    /// <summary>
+    /// What the interval's contents govern besides itself: Start refuses an unusable interval,
+    /// and the arrows grey out once it reaches a guard rail. The attributes that used to do this
+    /// only work on properties of this class, so moving the box out moved this here too.
+    /// </summary>
+    private void NotifyIntervalDependents()
+    {
+        StartCommand.NotifyCanExecuteChanged();
+        StepUpCommand.NotifyCanExecuteChanged();
+        StepDownCommand.NotifyCanExecuteChanged();
     }
 
     private void OnUiThread(Action action)
@@ -102,17 +149,6 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     public partial KeyCombo HotkeyCombo { get; set; }
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IntervalError), nameof(HasIntervalError))]
-    [NotifyCanExecuteChangedFor(nameof(StartCommand))]
-    [NotifyCanExecuteChangedFor(nameof(StepUpCommand), nameof(StepDownCommand))]
-    public partial string IntervalText { get; set; } = "250";
-
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(StepError), nameof(HasStepError))]
-    [NotifyCanExecuteChangedFor(nameof(StepUpCommand), nameof(StepDownCommand))]
-    public partial string StepText { get; set; } = "10";
-
-    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanEdit))]
     [NotifyCanExecuteChangedFor(nameof(StartCommand), nameof(StopCommand))]
     [NotifyCanExecuteChangedFor(nameof(StepUpCommand), nameof(StepDownCommand))]
@@ -121,19 +157,9 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     [ObservableProperty]
     public partial string Status { get; set; } = "Pick a key to send.";
 
-    /// <summary>Null when the interval is usable, otherwise the reason it is not.</summary>
-    public string? IntervalError => ValidateInterval(IntervalText, out _);
-
-    public bool HasIntervalError => IntervalError is not null;
-
-    /// <summary>Null when the step is usable, otherwise the reason it is not.</summary>
-    public string? StepError => ValidateStep(StepText, out _);
-
-    public bool HasStepError => StepError is not null;
-
-    /// <summary>Static description of the interval/step guard rails, shown under the boxes.</summary>
+    /// <summary>Description of the guard rails, shown under the boxes and taken from them.</summary>
     public string RangeHint =>
-        $"{MinIntervalMs}–{MaxIntervalMs:N0} ms, in steps of {MinStepMs}–{MaxStepMs:N0} ms";
+        $"{Interval.Min}–{Interval.Max:N0} ms, in steps of {Step.Min}–{Step.Max:N0} ms";
 
     /// <summary>Settings are locked while the loop runs — the engine captured them at Start.</summary>
     public bool CanEdit => !IsRunning;
@@ -182,16 +208,14 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
             // Clamp rather than trust. The file is plain text in a folder the user can open, so
             // a hand-edited 1 ms interval must not slip past the guard rail the UI enforces.
-            _lastValidIntervalMs = Math.Clamp(settings.IntervalMs, MinIntervalMs, MaxIntervalMs);
-            IntervalText = _lastValidIntervalMs.ToString(CultureInfo.InvariantCulture);
+            Interval.SetClamped(settings.IntervalMs);
 
             // Zero means the file was written before the step existed, not that someone asked
             // for a zero step — clamping that to 1 ms would silently give every upgrader the
             // slowest possible arrows. Anything else goes through the same guard rails.
-            _lastValidStepMs = settings.IntervalStepMs == 0
+            Step.SetClamped(settings.IntervalStepMs == 0
                 ? AppSettings.Default.IntervalStepMs
-                : Math.Clamp(settings.IntervalStepMs, MinStepMs, MaxStepMs);
-            StepText = _lastValidStepMs.ToString(CultureInfo.InvariantCulture);
+                : settings.IntervalStepMs);
         }
         finally
         {
@@ -200,7 +224,7 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         // What is now on screen, so the first edit is compared against it rather than written
         // back unchanged.
-        _lastSaved = AppSettings.From(SendCombo, HotkeyCombo, _lastValidIntervalMs, _lastValidStepMs);
+        _lastSaved = AppSettings.From(SendCombo, HotkeyCombo, Interval.LastValid, Step.LastValid);
     }
 
     /// <summary>
@@ -214,7 +238,7 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
-        var settings = AppSettings.From(SendCombo, HotkeyCombo, _lastValidIntervalMs, _lastValidStepMs);
+        var settings = AppSettings.From(SendCombo, HotkeyCombo, Interval.LastValid, Step.LastValid);
 
         // The interval box updates its binding on every keystroke, so typing "250" arrives here
         // three times and half-typed values like "2" arrive as invalid ones. Comparing against
@@ -237,27 +261,6 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     partial void OnSendComboChanged(KeyCombo value) => SaveSettings();
 
-    partial void OnIntervalTextChanged(string value)
-    {
-        // Half-typed values never become the saved interval; the last usable one stands until
-        // the box holds another.
-        if (ValidateInterval(value, out var interval) is null)
-        {
-            _lastValidIntervalMs = interval;
-        }
-
-        SaveSettings();
-    }
-
-    partial void OnStepTextChanged(string value)
-    {
-        if (ValidateStep(value, out var step) is null)
-        {
-            _lastValidStepMs = step;
-        }
-
-        SaveSettings();
-    }
 
     // ------------------------------------------------------------------ hotkey
 
@@ -332,84 +335,20 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         }
     }
 
-    internal static string? ValidateInterval(string? text, out int value)
-    {
-        value = 0;
-
-        if (!int.TryParse(text?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var parsed))
-        {
-            return "Enter a whole number of milliseconds.";
-        }
-
-        if (parsed < MinIntervalMs)
-        {
-            return $"Minimum is {MinIntervalMs} ms — faster than that floods the input queue.";
-        }
-
-        if (parsed > MaxIntervalMs)
-        {
-            return $"Maximum is {MaxIntervalMs:N0} ms.";
-        }
-
-        value = parsed;
-        return null;
-    }
-
-    internal static string? ValidateStep(string? text, out int value)
-    {
-        value = 0;
-
-        if (!int.TryParse(text?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var parsed))
-        {
-            return "Enter a whole number of milliseconds.";
-        }
-
-        if (parsed < MinStepMs || parsed > MaxStepMs)
-        {
-            return $"Step must be between {MinStepMs} and {MaxStepMs:N0} ms.";
-        }
-
-        value = parsed;
-        return null;
-    }
 
     // ------------------------------------------------------------------ commands
 
-    /// <summary>
-    /// What the arrows count from. A half-typed or out-of-range box has no usable number in it,
-    /// so they count from the last one that was usable instead — the arrows always land on a
-    /// legal value rather than doing nothing until the box is fixed by hand.
-    /// </summary>
-    private int IntervalOrLastValid =>
-        ValidateInterval(IntervalText, out var value) is null ? value : _lastValidIntervalMs;
+    private bool CanStepUp => CanEdit && Interval.ValueOrLastValid < Interval.Max;
 
-    private int StepOrLastValid =>
-        ValidateStep(StepText, out var value) is null ? value : _lastValidStepMs;
+    private bool CanStepDown => CanEdit && Interval.ValueOrLastValid > Interval.Min;
 
-    private bool CanStepUp => CanEdit && IntervalOrLastValid < MaxIntervalMs;
-
-    private bool CanStepDown => CanEdit && IntervalOrLastValid > MinIntervalMs;
-
+    // Nudging sets the interval's text, which is the whole update: validation, the last-good
+    // value and the save all hang off that, exactly as they do when the number is typed.
     [RelayCommand(CanExecute = nameof(CanStepUp))]
-    private void StepUp() => NudgeInterval(1);
+    private void StepUp() => Interval.Nudge(Step.ValueOrLastValid);
 
     [RelayCommand(CanExecute = nameof(CanStepDown))]
-    private void StepDown() => NudgeInterval(-1);
-
-    /// <summary>
-    /// Moves the interval by one step. Clamped rather than refused, so holding an arrow down
-    /// stops at the guard rail instead of walking past it — and the buttons disable there, so
-    /// the limit is visible before it is hit.
-    /// </summary>
-    private void NudgeInterval(int direction)
-    {
-        var next = Math.Clamp(
-            IntervalOrLastValid + (direction * StepOrLastValid), MinIntervalMs, MaxIntervalMs);
-
-        // Setting the text is the whole update: validation, the last-valid value and the save
-        // all hang off OnIntervalTextChanged, exactly as they do when the number is typed.
-        IntervalText = next.ToString(CultureInfo.InvariantCulture);
-    }
+    private void StepDown() => Interval.Nudge(-Step.ValueOrLastValid);
 
     /// <summary>
     /// The last term is a safety interlock rather than a validation rule. With no hotkey
@@ -420,19 +359,19 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// inconvenience and needing the power button.
     /// </summary>
     private bool CanStart =>
-        !IsRunning && !SendCombo.IsEmpty && !HasIntervalError && CollisionError is null
+        !IsRunning && !SendCombo.IsEmpty && !Interval.HasError && CollisionError is null
         && _hotKey?.Current.IsEmpty == false;
 
     [RelayCommand(CanExecute = nameof(CanStart))]
     private void Start()
     {
-        if (ValidateInterval(IntervalText, out var interval) is not null)
+        if (Interval.Error is not null)
         {
             return;
         }
 
         // Passing the hotkey lets the engine hold off until you have let go of it.
-        _engine.Start(SendCombo, interval, HotkeyCombo);
+        _engine.Start(SendCombo, Interval.ValueOrLastValid, HotkeyCombo);
         IsRunning = true;
         Status = RunningStatus();
     }
@@ -471,7 +410,7 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     private string RunningStatus()
     {
-        var interval = ValidateInterval(IntervalText, out var value) is null ? value : 0;
+        var interval = Interval.ValueOrLastValid;
         return HotkeyCombo.IsEmpty
             ? $"Running — {SendCombo.DisplayName} every {interval} ms."
             : $"Running — {SendCombo.DisplayName} every {interval} ms. {HotkeyCombo.DisplayName} to stop.";

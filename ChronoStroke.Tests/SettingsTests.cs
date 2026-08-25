@@ -72,7 +72,7 @@ public class SettingsTests
     [InlineData("  250  ", 250)]        // trimmed before parsing
     public void ValidIntervalsAreAccepted(string text, int expected)
     {
-        Assert.Null(MainViewModel.ValidateInterval(text, out var value));
+        Assert.Null(MainViewModel.CreateIntervalField().Validate(text, out var value));
         Assert.Equal(expected, value);
     }
 
@@ -92,7 +92,7 @@ public class SettingsTests
     [InlineData(null)]
     public void UnusableIntervalsAreRejectedWithAReason(string? text)
     {
-        var error = MainViewModel.ValidateInterval(text, out var value);
+        var error = MainViewModel.CreateIntervalField().Validate(text, out var value);
 
         Assert.NotNull(error);
         Assert.NotEqual(string.Empty, error);
@@ -106,7 +106,7 @@ public class SettingsTests
     [InlineData("  5  ", 5)]            // trimmed before parsing
     public void ValidStepsAreAccepted(string text, int expected)
     {
-        Assert.Null(MainViewModel.ValidateStep(text, out var value));
+        Assert.Null(MainViewModel.CreateStepField().Validate(text, out var value));
         Assert.Equal(expected, value);
     }
 
@@ -124,7 +124,7 @@ public class SettingsTests
     [InlineData(null)]
     public void UnusableStepsAreRejectedWithAReason(string? text)
     {
-        var error = MainViewModel.ValidateStep(text, out var value);
+        var error = MainViewModel.CreateStepField().Validate(text, out var value);
 
         Assert.NotNull(error);
         Assert.NotEqual(string.Empty, error);
