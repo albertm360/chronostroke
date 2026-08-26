@@ -233,8 +233,10 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         _loading = true;
         try
         {
-            SendCombo = settings.SendCombo;
-            Hotkey.Combo = settings.HotkeyCombo;
+            // Sanitised for the same reason the interval below is clamped: the file is
+            // hand-editable, so nothing read from it is trusted as it stands.
+            SendCombo = settings.SendCombo.Sanitised();
+            Hotkey.Combo = settings.HotkeyCombo.Sanitised();
 
             // Clamp rather than trust. The file is plain text in a folder the user can open, so
             // a hand-edited 1 ms interval must not slip past the guard rail the UI enforces.
