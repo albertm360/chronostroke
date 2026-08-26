@@ -14,9 +14,6 @@
         WindowStartupLocation="CenterScreen">
 
     <Window.Resources>
-        <!-- Built into WPF; no custom converter needed. -->
-        <BooleanToVisibilityConverter x:Key="BoolToVis" />
-
         <!-- The theme's RepeatButton is the one a scroll bar uses: its default style aligns it
              Left and Center, so it shrinks to the size of its glyph and only that patch takes
              the click. Stretching it is the whole fix — the rest strips the face and border so
@@ -54,13 +51,62 @@
         </Style>
 
         <!-- Fluent's InfoBar has no WPF equivalent, so this is the whole control: a tinted,
-             rounded box with an icon next to wrapping text. Severity (critical vs. caution)
-             is just the Background/Foreground the caller supplies; the chrome is shared. -->
-        <Style x:Key="BannerStyle" TargetType="Border">
-            <Setter Property="CornerRadius" Value="4" />
-            <Setter Property="Padding" Value="12,10" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="BorderBrush" Value="{DynamicResource ControlStrokeColorDefaultBrush}" />
+             rounded box with an icon next to wrapping text. A ContentControl rather than a
+             UserControl because the message is the only thing a caller supplies — Content is
+             already the right property for it, and the severity styles below fill in the rest.
+
+             The banner decides its own visibility. Every message it binds to is null exactly
+             when there is nothing to say, so a caller passing Content is passing the answer to
+             "should this be on screen" at the same time; a separate Has* flag and a
+             BooleanToVisibilityConverter were two more things to keep in step for no gain.
+
+             Tag carries the glyph. It is WPF's designated slot for a payload with no dedicated
+             property, and adding a dependency property would mean a code-behind type for one
+             string that only ever takes two values. -->
+        <Style x:Key="BannerStyle" TargetType="ContentControl">
+            <Setter Property="Margin" Value="0,8,0,0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ContentControl">
+                        <Border CornerRadius="4"
+                                Padding="12,10"
+                                BorderThickness="1"
+                                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                                Background="{TemplateBinding Background}">
+                            <Grid ColumnDefinitions="Auto, *">
+                                <TextBlock Grid.Column="0" Margin="0,0,8,0" FontSize="13"
+                                           Foreground="{TemplateBinding Foreground}"
+                                           Text="{TemplateBinding Tag}" />
+                                <TextBlock Grid.Column="1" FontSize="12.5" TextWrapping="Wrap"
+                                           Foreground="{TemplateBinding Foreground}"
+                                           Text="{TemplateBinding Content}" />
+                            </Grid>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="Content" Value="{x:Null}">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Blocking: the configuration will not run as it stands. -->
+        <Style x:Key="CriticalBannerStyle" TargetType="ContentControl"
+               BasedOn="{StaticResource BannerStyle}">
+            <Setter Property="Background" Value="{DynamicResource SystemFillColorCriticalBackgroundBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}" />
+            <Setter Property="Tag" Value="&#x2297;" />
+        </Style>
+
+        <!-- Advisory: the configuration is legal and will run. Caution colour keeps it visually
+             distinct from the blocking banner. -->
+        <Style x:Key="CautionBannerStyle" TargetType="ContentControl"
+               BasedOn="{StaticResource BannerStyle}">
+            <Setter Property="Background" Value="{DynamicResource SystemFillColorCautionBackgroundBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCautionBrush}" />
+            <Setter Property="Tag" Value="&#x25B3;" />
         </Style>
     </Window.Resources>
 
@@ -83,35 +129,10 @@
             <TextBlock x:Name="HotkeyLabel" Style="{StaticResource FieldLabelStyle}" Text="Start / stop hotkey" Margin="0,18,0,6" />
             <local:KeyCaptureBox Combo="{Binding Hotkey.Combo}" IsEnabled="{Binding CanEdit}"
                                  AutomationProperties.LabeledBy="{Binding ElementName=HotkeyLabel}" />
-            <Border Margin="0,8,0,0"
-                    Style="{StaticResource BannerStyle}"
-                    Background="{DynamicResource SystemFillColorCriticalBackgroundBrush}"
-                    Visibility="{Binding HasHotkeyError, Converter={StaticResource BoolToVis}}">
-                <Grid ColumnDefinitions="Auto, *">
-                    <TextBlock Grid.Column="0" Margin="0,0,8,0" FontSize="13"
-                               Foreground="{DynamicResource SystemFillColorCriticalBrush}"
-                               Text="&#x2297;" />
-                    <TextBlock Grid.Column="1" FontSize="12.5" TextWrapping="Wrap"
-                               Foreground="{DynamicResource SystemFillColorCriticalBrush}"
-                               Text="{Binding HotkeyError}" />
-                </Grid>
-            </Border>
-
-            <!-- Advisory rather than an error: the configuration is legal and will run. Caution
-                 colour keeps it visually distinct from the blocking banner above. -->
-            <Border Margin="0,8,0,0"
-                    Style="{StaticResource BannerStyle}"
-                    Background="{DynamicResource SystemFillColorCautionBackgroundBrush}"
-                    Visibility="{Binding HasHotkeyWarning, Converter={StaticResource BoolToVis}}">
-                <Grid ColumnDefinitions="Auto, *">
-                    <TextBlock Grid.Column="0" Margin="0,0,8,0" FontSize="13"
-                               Foreground="{DynamicResource SystemFillColorCautionBrush}"
-                               Text="&#x25B3;" />
-                    <TextBlock Grid.Column="1" FontSize="12.5" TextWrapping="Wrap"
-                               Foreground="{DynamicResource SystemFillColorCautionBrush}"
-                               Text="{Binding HotkeyWarning}" />
-                </Grid>
-            </Border>
+            <ContentControl Style="{StaticResource CriticalBannerStyle}"
+                            Content="{Binding HotkeyError}" />
+            <ContentControl Style="{StaticResource CautionBannerStyle}"
+                            Content="{Binding HotkeyWarning}" />
 
             <Grid Margin="0,18,0,0" ColumnDefinitions="*, Auto">
 
@@ -172,32 +193,10 @@
                        Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                        Text="{Binding RangeHint}" />
 
-            <Border Margin="0,8,0,0"
-                    Style="{StaticResource BannerStyle}"
-                    Background="{DynamicResource SystemFillColorCriticalBackgroundBrush}"
-                    Visibility="{Binding Interval.HasError, Converter={StaticResource BoolToVis}}">
-                <Grid ColumnDefinitions="Auto, *">
-                    <TextBlock Grid.Column="0" Margin="0,0,8,0" FontSize="13"
-                               Foreground="{DynamicResource SystemFillColorCriticalBrush}"
-                               Text="&#x2297;" />
-                    <TextBlock Grid.Column="1" FontSize="12.5" TextWrapping="Wrap"
-                               Foreground="{DynamicResource SystemFillColorCriticalBrush}"
-                               Text="{Binding Interval.Error}" />
-                </Grid>
-            </Border>
-            <Border Margin="0,8,0,0"
-                    Style="{StaticResource BannerStyle}"
-                    Background="{DynamicResource SystemFillColorCriticalBackgroundBrush}"
-                    Visibility="{Binding Step.HasError, Converter={StaticResource BoolToVis}}">
-                <Grid ColumnDefinitions="Auto, *">
-                    <TextBlock Grid.Column="0" Margin="0,0,8,0" FontSize="13"
-                               Foreground="{DynamicResource SystemFillColorCriticalBrush}"
-                               Text="&#x2297;" />
-                    <TextBlock Grid.Column="1" FontSize="12.5" TextWrapping="Wrap"
-                               Foreground="{DynamicResource SystemFillColorCriticalBrush}"
-                               Text="{Binding Step.Error}" />
-                </Grid>
-            </Border>
+            <ContentControl Style="{StaticResource CriticalBannerStyle}"
+                            Content="{Binding Interval.Error}" />
+            <ContentControl Style="{StaticResource CriticalBannerStyle}"
+                            Content="{Binding Step.Error}" />
 
             <StackPanel Orientation="Horizontal" Margin="0,20,0,0">
                 <Button Padding="16,8"
