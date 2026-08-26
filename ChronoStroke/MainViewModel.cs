@@ -127,6 +127,11 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
                 ? $"Waiting for you to let go of {Hotkey.Combo.DisplayName}…"
                 : RunningStatus());
 
+        // The loop can end without anyone asking it to. SendFailed has already put the reason in
+        // the status line by the time this arrives; this is what unlocks the fields and turns the
+        // dot grey to match it, instead of leaving the two contradicting each other.
+        _engine.Stopped += (_, _) => OnUiThread(NotifyRunStateChanged);
+
         ApplySettings(SettingsStore.Load());
     }
 
@@ -138,6 +143,20 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private void NotifyIntervalDependents()
     {
         StartCommand.NotifyCanExecuteChanged();
+        StepUpCommand.NotifyCanExecuteChanged();
+        StepDownCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// What the run state governs. This is the set of notifications the attributes on IsRunning
+    /// used to generate; they only work on a property this class stores, and it no longer does.
+    /// </summary>
+    private void NotifyRunStateChanged()
+    {
+        OnPropertyChanged(nameof(IsRunning));
+        OnPropertyChanged(nameof(CanEdit));
+        StartCommand.NotifyCanExecuteChanged();
+        StopCommand.NotifyCanExecuteChanged();
         StepUpCommand.NotifyCanExecuteChanged();
         StepDownCommand.NotifyCanExecuteChanged();
     }
@@ -175,11 +194,11 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     [NotifyCanExecuteChangedFor(nameof(StartCommand))]
     public partial KeyCombo SendCombo { get; set; }
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(CanEdit))]
-    [NotifyCanExecuteChangedFor(nameof(StartCommand), nameof(StopCommand))]
-    [NotifyCanExecuteChangedFor(nameof(StepUpCommand), nameof(StepDownCommand))]
-    public partial bool IsRunning { get; set; }
+    /// <summary>
+    /// Whether the loop is running. Read from the engine rather than stored, because the engine
+    /// is the only thing that knows — including when the loop ends without being asked to.
+    /// </summary>
+    public bool IsRunning => _engine.IsRunning;
 
     [ObservableProperty]
     public partial string Status { get; set; } = "Pick a key to send.";
@@ -364,7 +383,7 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         // Passing the hotkey lets the engine hold off until you have let go of it.
         _engine.Start(SendCombo, Interval.ValueOrLastValid, Hotkey.Combo);
-        IsRunning = true;
+        NotifyRunStateChanged();
         Status = RunningStatus();
     }
 
@@ -372,7 +391,7 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private async Task StopAsync()
     {
         await _engine.StopAsync();
-        IsRunning = false;
+        NotifyRunStateChanged();
         Status = "Stopped.";
     }
 

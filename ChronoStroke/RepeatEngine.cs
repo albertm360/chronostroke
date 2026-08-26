@@ -43,6 +43,21 @@ internal sealed class RepeatEngine : IAsyncDisposable
     public event EventHandler<string>? SendFailed;
 
     /// <summary>
+    /// Raised once when the loop is no longer running, however it ended — a Stop, or the loop
+    /// dying on its own. Fires on a thread-pool thread, after the key has been released and
+    /// after <see cref="IsRunning"/> has already gone false, so a handler that asks gets the
+    /// answer the event is announcing.
+    /// </summary>
+    /// <remarks>
+    /// The self-terminating case is the one this exists for. RunAsync's catch-all reports the
+    /// failure and lets the task complete normally, which used to leave _cts set: the engine went
+    /// on claiming to run, Start refused to start it again, and the view model was never told, so
+    /// the status line said the loop had stopped while the dot stayed green and the fields stayed
+    /// locked.
+    /// </remarks>
+    public event EventHandler? Stopped;
+
+    /// <summary>
     /// True when the loop is holding off because trigger keys are still down, false once it
     /// starts sending. Fires on a thread-pool thread.
     /// </summary>
@@ -76,17 +91,24 @@ internal sealed class RepeatEngine : IAsyncDisposable
         // Handing the token to Task.Run as well means a Stop that lands before the pool starts
         // the work item skips RunAsync entirely rather than starting a loop already cancelled.
         // The task then completes as Cancelled, which is the case StopAsync already handles.
+        //
+        // RunAsync is handed the source as well as the token. Both are locals, so this keeps H1's
+        // property that nothing here is a deferred field read; the source is what lets the loop
+        // recognise its own run and clear it on the way out.
         var cts = new CancellationTokenSource();
         var token = cts.Token;
         _cts = cts;
-        _loop = Task.Run(() => RunAsync(down, up, intervalMs, triggerCombo, token), token);
+        _loop = Task.Run(() => RunAsync(down, up, intervalMs, triggerCombo, cts, token), token);
     }
 
     public async Task StopAsync()
     {
-        var cts = _cts;
+        // Exchange rather than read-then-write: the loop's finally clears the same field when it
+        // ends on its own, and whichever of the two takes the source from it is the one that
+        // disposes it. Without that, a loop dying at the moment Stop is called could dispose the
+        // source before CancelAsync below reached it, which throws ObjectDisposedException.
+        var cts = Interlocked.Exchange(ref _cts, null);
         var loop = _loop;
-        _cts = null;
         _loop = null;
 
         if (cts is null)
@@ -124,6 +146,7 @@ internal sealed class RepeatEngine : IAsyncDisposable
         NativeMethods.INPUT[] up,
         int intervalMs,
         KeyCombo triggerCombo,
+        CancellationTokenSource ownCts,
         CancellationToken ct)
     {
         // Never let the hold swallow the whole interval; at the 50 ms floor this gives 25 ms
@@ -176,11 +199,32 @@ internal sealed class RepeatEngine : IAsyncDisposable
         }
         finally
         {
-            // Unconditional. If cancellation landed between Press and Release the key is still
-            // physically down as far as the target window is concerned, and leaving it that way
-            // means a game holding an action forever. A key-up for a key that was never down is
-            // harmless, so this is safe to send even on the paths that did not press anything.
-            Send(up);
+            try
+            {
+                // Unconditional. If cancellation landed between Press and Release the key is still
+                // physically down as far as the target window is concerned, and leaving it that way
+                // means a game holding an action forever. A key-up for a key that was never down is
+                // harmless, so this is safe to send even on the paths that did not press anything.
+                Send(up);
+            }
+            finally
+            {
+                // Nested so that retiring the run does not depend on the release succeeding. The
+                // real sender returns a failure rather than throwing, but if it ever did throw
+                // from here the engine would be left claiming to run with no loop behind it —
+                // which is the exact state this finding is about.
+
+                // Retire before announcing, so IsRunning is already false by the time a listener
+                // asks. The compare-and-swap is what makes it *this* run: on a Stop, StopAsync
+                // has taken the source already and owns disposing it, so there is nothing to do.
+                if (Interlocked.CompareExchange(ref _cts, null, ownCts) == ownCts)
+                {
+                    _loop = null;
+                    ownCts.Dispose();
+                }
+
+                Stopped?.Invoke(this, EventArgs.Empty);
+            }
         }
     }
 
