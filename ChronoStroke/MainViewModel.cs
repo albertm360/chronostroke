@@ -40,6 +40,12 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Suppresses saving while settings are being applied from disk.</summary>
     private bool _loading;
 
+    /// <summary>How long the settings file waits for editing to stop before it is rewritten.</summary>
+    private const int SaveDebounceMs = 500;
+
+    /// <summary>Restarted by every edit; writes the file when it finally gets to run.</summary>
+    private readonly DispatcherTimer _saveTimer;
+
     /// <summary>Shortest gap between two accepted hotkey toggles.</summary>
     private const int HotkeyDebounceMs = 250;
 
@@ -78,6 +84,16 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     public MainViewModel()
     {
+        // This constructor overload starts the timer, which is not what an idle app wants — it
+        // is armed by the first edit, not by existing. Background priority because a settings
+        // write must never come before rendering or input.
+        _saveTimer = new DispatcherTimer(
+            TimeSpan.FromMilliseconds(SaveDebounceMs),
+            DispatcherPriority.Background,
+            (_, _) => FlushSettings(),
+            _dispatcher);
+        _saveTimer.Stop();
+
         // Typing in either box saves, and moves the guard rails the spinner arrows disable at.
         Interval.Changed += (_, _) =>
         {
@@ -242,9 +258,25 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     }
 
     /// <summary>
-    /// Persists the current configuration. Called on every accepted edit and again on shutdown,
-    /// so a crash or a force-quit still leaves the last good settings on disk.
+    /// Notes that the configuration has changed and starts the clock on writing it out.
     /// </summary>
+    /// <remarks>
+    /// Every accepted edit lands here, and there are far more of them than there are things worth
+    /// writing. The boxes update their bindings on each keystroke, so typing 100 into the step box
+    /// arrives as 1, then 10, then 100 — three values, all of them valid, all of them previously
+    /// a full write. Holding a spinner arrow was worse: the repeat interval is 80 ms, so the file
+    /// was rewritten about twelve times a second, each time creating the directory, writing a
+    /// temp file and renaming it, synchronously on the UI thread and through whatever real-time
+    /// scanner is installed.
+    /// <para>
+    /// Restarting the timer on each edit collapses all of that into one write once the typing
+    /// stops. The cost is a window — up to the debounce — in which the newest edit is not yet on
+    /// disk if the process is killed outright. That is the same class of loss the README already
+    /// documents for End Task, every ordinary exit flushes through
+    /// <see cref="DisposeAsync"/>, and the write itself is still atomic, so the file is never
+    /// found half-written.
+    /// </para>
+    /// </remarks>
     public void SaveSettings()
     {
         if (_loading)
@@ -252,12 +284,28 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
+        // Restart rather than let it run: the clock measures quiet, not elapsed time.
+        _saveTimer.Stop();
+        _saveTimer.Start();
+    }
+
+    /// <summary>
+    /// Writes the configuration out now, if it differs from what is already on disk.
+    /// </summary>
+    private void FlushSettings()
+    {
+        _saveTimer.Stop();
+
+        if (_loading)
+        {
+            return;
+        }
+
         var settings = AppSettings.From(SendCombo, Hotkey.Combo, Interval.LastValid, Step.LastValid);
 
-        // The interval box updates its binding on every keystroke, so typing "250" arrives here
-        // three times and half-typed values like "2" arrive as invalid ones. Comparing against
-        // what was last written collapses that to a single save once the value is usable, and
-        // skips the disk entirely while the user is still mid-number.
+        // Comparing against what was last written skips the disk entirely when the debounce has
+        // collapsed a run of edits that ended where it started — retyping the same number, or
+        // nudging an arrow up and back down.
         if (settings == _lastSaved)
         {
             return;
@@ -379,6 +427,9 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
         await _engine.DisposeAsync().ConfigureAwait(true);
 
-        SaveSettings();
+        // Flush rather than queue. The dispatcher stops pumping moments after this returns, so a
+        // debounced write would never get its tick and the last edit before closing would be the
+        // one edit that did not persist.
+        FlushSettings();
     }
 }

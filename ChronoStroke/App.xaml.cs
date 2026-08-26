@@ -22,10 +22,13 @@ public partial class App : Application
         // unwinds the loop past the key-up first.
         DispatcherUnhandledException += OnDispatcherUnhandledException;
 
-        // A faulted Task whose exception nobody observed is finalized quietly in .NET, but the
-        // fire-and-forget toggle at MainWindow.WndProc is exactly that shape. Observe them so a
-        // failure cannot be lost without trace.
-        TaskScheduler.UnobservedTaskException += (_, args) => args.SetObserved();
+        // There is deliberately no TaskScheduler.UnobservedTaskException handler. One used to sit
+        // here calling SetObserved() and nothing else, above a comment claiming it existed so a
+        // failure could not be lost without trace — which is the opposite of what an empty
+        // handler does. It also guarded against nothing: since .NET Core an unobserved task
+        // exception does not tear down the process, and the case the comment named is already
+        // handled properly. MainWindow.ToggleFromHotKey is async void precisely so its exceptions
+        // reach the dispatcher and the handler above, which means they are never unobserved.
     }
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
