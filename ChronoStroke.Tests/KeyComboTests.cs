@@ -59,4 +59,64 @@ public class KeyComboTests
         Assert.NotEqual(ctrlF8, new KeyCombo(VkF8, ModifierKeys.None));
         Assert.NotEqual(ctrlF8, new KeyCombo(0x78, ModifierKeys.Control));
     }
+
+    /// <summary>
+    /// settings.json is plain text in a folder the user can open, so what comes back from it is
+    /// not trusted. A key past the end of the virtual-key table cannot be sent at all.
+    /// </summary>
+    [Theory]
+    [InlineData(0x00)]      // unassigned; also how an empty combination is stored
+    [InlineData(0xFF)]      // one past VK_OEM_CLEAR, the last entry in the table
+    [InlineData(0x1234)]
+    [InlineData(ushort.MaxValue)]
+    public void AnUnsendableKeyIsDroppedEntirely(int virtualKey)
+    {
+        var combo = new KeyCombo((ushort)virtualKey, ModifierKeys.Control);
+
+        Assert.True(combo.Sanitised().IsEmpty);
+    }
+
+    [Theory]
+    [InlineData(0x01)]      // VK_LBUTTON, the first entry
+    [InlineData(VkF8)]
+    [InlineData(VkNumpad4)]
+    [InlineData(0xFE)]      // VK_OEM_CLEAR, the last entry
+    public void AKeyInsideTheTableSurvives(int virtualKey)
+    {
+        var combo = new KeyCombo((ushort)virtualKey, ModifierKeys.Control);
+
+        Assert.Equal(combo, combo.Sanitised());
+    }
+
+    /// <summary>
+    /// Undefined modifier bits are cleared rather than taken as a reason to drop the combination:
+    /// the key is still good, and Ctrl+F8 with a stray bit set is obviously meant to be Ctrl+F8.
+    /// </summary>
+    [Fact]
+    public void UndefinedModifierBitsAreCleared()
+    {
+        var combo = new KeyCombo(VkF8, ModifierKeys.Control | (ModifierKeys)0x40);
+
+        var clean = combo.Sanitised();
+
+        Assert.Equal(VkF8, clean.VirtualKey);
+        Assert.Equal(ModifierKeys.Control, clean.Modifiers);
+    }
+
+    [Fact]
+    public void EveryDefinedModifierIsKept()
+    {
+        var all = ModifierKeys.Alt | ModifierKeys.Control | ModifierKeys.Shift | ModifierKeys.Windows;
+        var combo = new KeyCombo(VkF8, all);
+
+        Assert.Equal(all, combo.Sanitised().Modifiers);
+    }
+
+    [Fact]
+    public void SanitisingIsIdempotent()
+    {
+        var combo = new KeyCombo(VkF8, ModifierKeys.Control | (ModifierKeys)0x80);
+
+        Assert.Equal(combo.Sanitised(), combo.Sanitised().Sanitised());
+    }
 }

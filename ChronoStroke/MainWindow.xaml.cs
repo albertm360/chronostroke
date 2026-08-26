@@ -17,6 +17,11 @@ internal partial class MainWindow : Window
 {
     private readonly MainViewModel _viewModel = new();
     private HwndSource? _source;
+
+    /// <summary>Set on entry, so a close arriving mid-teardown is turned away rather than served.</summary>
+    private bool _closing;
+
+    /// <summary>Set once teardown is finished, so the close that follows it is allowed through.</summary>
     private bool _shutdownComplete;
 
     public MainWindow()
@@ -69,12 +74,29 @@ internal partial class MainWindow : Window
     {
         if (_shutdownComplete)
         {
-            // Second pass. base.OnClosing raises the public Closing event, so it must run once
-            // per close, not once per pass through this method.
+            // The close we queued ourselves, once teardown finished. base.OnClosing raises the
+            // public Closing event, so it must run once per close, not once per pass through
+            // this method.
             base.OnClosing(e);
             return;
         }
 
+        if (_closing)
+        {
+            // Teardown is already running. The await below keeps the dispatcher pumping, so a
+            // second close can arrive in the middle of it — the title bar's X and Alt+F4 both
+            // still work, since IsEnabled = false only covers the client area. Without this the
+            // whole method ran again: the public Closing event raised a second time, the view
+            // model disposed a second time, and a second close queued behind the first.
+            //
+            // None of that corrupted anything, because each step is idempotent and a Close on an
+            // already-closed window returns quietly. But the guard below was written to prevent
+            // exactly this and did not, because it is set after the await rather than before it.
+            e.Cancel = true;
+            return;
+        }
+
+        _closing = true;
         base.OnClosing(e);
 
         // Stopping the engine is async — it waits for the loop to unwind past the key-up that
