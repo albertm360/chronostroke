@@ -150,9 +150,7 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     private void NotifyHotkeyDependents()
     {
         OnPropertyChanged(nameof(HotkeyError));
-        OnPropertyChanged(nameof(HasHotkeyError));
         OnPropertyChanged(nameof(HotkeyWarning));
-        OnPropertyChanged(nameof(HasHotkeyWarning));
         StartCommand.NotifyCanExecuteChanged();
     }
 
@@ -173,8 +171,7 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     }
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(HotkeyError), nameof(HasHotkeyError))]
-    [NotifyPropertyChangedFor(nameof(HotkeyWarning), nameof(HasHotkeyWarning))]
+    [NotifyPropertyChangedFor(nameof(HotkeyError), nameof(HotkeyWarning))]
     [NotifyCanExecuteChangedFor(nameof(StartCommand))]
     public partial KeyCombo SendCombo { get; set; }
 
@@ -204,9 +201,8 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             ? "The hotkey must differ from the key being sent, or the repeated keystroke will trigger it."
             : null;
 
+    /// <summary>Null when there is nothing wrong — which is also what collapses the banner.</summary>
     public string? HotkeyError => CollisionError ?? Hotkey.Error;
-
-    public bool HasHotkeyError => HotkeyError is not null;
 
     /// <summary>
     /// Advisory, not blocking. The two combinations differ, so nothing is wrong yet — but they
@@ -223,8 +219,6 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
               + "different modifiers. Holding a modifier while the loop runs can turn the "
               + "repeated keystroke into the hotkey and stop it."
             : null;
-
-    public bool HasHotkeyWarning => HotkeyWarning is not null;
 
     // ---------------------------------------------------------------- settings
 
