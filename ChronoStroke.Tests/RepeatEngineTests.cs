@@ -169,6 +169,108 @@ public class RepeatEngineTests
         Assert.Equal(2, recorder.Batches.Length);
     }
 
+    /// <summary>
+    /// A sender that throws on the press and works on the release — enough to kill the loop
+    /// through RunAsync's catch-all while leaving the key-up in its finally able to succeed.
+    /// </summary>
+    private static Func<NativeMethods.INPUT[], SendOutcome> BreaksOnPress(Recorder recorder) =>
+        batch => IsKeyUp(batch)
+            ? recorder.Send(batch)
+            : throw new InvalidOperationException("the sender broke");
+
+    /// <summary>
+    /// The loop can end without anyone asking it to. Until the engine retired itself here, _cts
+    /// stayed set: it went on reporting IsRunning, and the view model was never told, so the
+    /// status line said the loop had stopped while the dot stayed green.
+    /// </summary>
+    [Fact]
+    public async Task TheLoopDyingOnItsOwnRetiresTheEngineAndAnnouncesIt()
+    {
+        var recorder = new Recorder();
+        var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stillRunningWhenAnnounced = true;
+
+        await using var engine = new RepeatEngine { Send = BreaksOnPress(recorder) };
+        engine.Stopped += (_, _) =>
+        {
+            stillRunningWhenAnnounced = engine.IsRunning;
+            stopped.TrySetResult();
+        };
+
+        engine.Start(X, intervalMs: 1000);
+        await stopped.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.False(engine.IsRunning);
+        Assert.False(stillRunningWhenAnnounced, "IsRunning must be false before Stopped fires");
+        Assert.True(IsKeyUp(recorder.Batches[^1]), "a loop that died must still release the key");
+    }
+
+    /// <summary>The user-visible half of the same bug: the app could not be restarted.</summary>
+    [Fact]
+    public async Task TheEngineStartsAgainAfterTheLoopDiesOnItsOwn()
+    {
+        var recorder = new Recorder();
+        var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var breaks = BreaksOnPress(recorder);
+        var broken = true;
+
+        await using var engine = new RepeatEngine();
+        engine.Send = batch => broken ? breaks(batch) : recorder.Send(batch);
+        engine.Stopped += (_, _) => stopped.TrySetResult();
+
+        engine.Start(X, intervalMs: 1000);
+        await stopped.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // With _cts left behind, Start's own IsRunning guard turned this into a no-op and the
+        // only way back was to close the app.
+        broken = false;
+        var beforeSecondStart = recorder.Batches.Length;
+        engine.Start(X, intervalMs: 1000);
+        await Task.Delay(50);
+
+        Assert.True(engine.IsRunning, "the engine should accept a fresh Start");
+        Assert.True(
+            recorder.Batches.Length > beforeSecondStart,
+            "the second run should have sent something");
+    }
+
+    /// <summary>
+    /// Stopped means "the loop is no longer running", so a deliberate Stop raises it too — once,
+    /// not once per call.
+    /// </summary>
+    [Fact]
+    public async Task StoppingRaisesStoppedExactlyOnce()
+    {
+        var recorder = new Recorder();
+        var count = 0;
+
+        await using var engine = new RepeatEngine { Send = recorder.Send };
+        engine.Stopped += (_, _) => Interlocked.Increment(ref count);
+
+        engine.Start(X, intervalMs: 1000);
+        await Task.Delay(15);
+        await engine.StopAsync();
+        await engine.StopAsync();
+
+        Assert.Equal(1, count);
+        Assert.False(engine.IsRunning);
+    }
+
+    /// <summary>A loop that never started has nothing to announce.</summary>
+    [Fact]
+    public async Task AnEmptyComboRaisesNoStopped()
+    {
+        var count = 0;
+
+        await using var engine = new RepeatEngine { Send = _ => new SendOutcome(0, 0, 0) };
+        engine.Stopped += (_, _) => Interlocked.Increment(ref count);
+
+        engine.Start(default, intervalMs: 50);
+        await Task.Delay(60);
+
+        Assert.Equal(0, count);
+    }
+
     [Fact]
     public async Task DisposeStopsARunningLoopAndReleasesTheKey()
     {
