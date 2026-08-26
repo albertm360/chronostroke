@@ -23,14 +23,14 @@ internal readonly record struct KeyCombo(ushort VirtualKey, ModifierKeys Modifie
     public bool IsEmpty => VirtualKey == 0;
 
     /// <summary>
-    /// This combination if the app can act on it, otherwise an empty one.
+    /// Returns this combination if the app can act on it, and an empty one if it cannot.
     /// </summary>
     /// <remarks>
-    /// For values arriving from <c>settings.json</c>, which is plain text in a folder the user can
-    /// open. The interval and the step were already clamped on load; these two fields were not,
-    /// while the README claimed every value was re-validated. Nothing dangerous got through — a
-    /// nonsense virtual key falls into the virtual-key branch of the sender and SendInput refuses
-    /// it — but "mostly validated" is not what the file's readers were promised.
+    /// This exists for values arriving from <c>settings.json</c>, which is plain text in a folder
+    /// the user can open. The interval and the step were already clamped on load; these two fields
+    /// were not, while the README claimed every value was re-validated. Nothing dangerous got
+    /// through — a nonsense virtual key falls into the virtual-key branch of the sender and
+    /// SendInput refuses it — but "mostly validated" is not what the file's readers were promised.
     /// <para>
     /// A key past the end of the table cannot be sent at all, so the whole combination is dropped
     /// rather than kept with a key that does nothing. Undefined bits in the modifiers are cleared
