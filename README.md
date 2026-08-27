@@ -78,6 +78,11 @@ Copy it anywhere and run it. To iterate on the code instead, `dotnet run --proje
 A capture box records *every* key you press into it, `Tab` and `Space` included — that is what
 lets them be chosen. **Press `Esc` to leave a capture box** and carry on with the keyboard.
 
+**A combination is replaced, not cleared.** Press a different key into the box and it takes over;
+there is no button to empty one, because an empty box only ever means Start is unavailable. If a
+box does read `(not set)`, the saved value was rejected when the app loaded it — see
+[Where settings live](#where-settings-live) — and pressing any key fixes it.
+
 Once running, switch to the target window and the keystrokes follow your focus. Press the hotkey
 again to stop.
 
@@ -92,8 +97,11 @@ moment the status line says so.
 %AppData%\ChronoStroke\settings.json
 ```
 
-Plain JSON, safe to read and edit by hand — values are re-validated on load, so an out-of-range
-interval is clamped rather than honoured. Delete the file to reset to defaults.
+Plain JSON, safe to read and edit by hand — every value is re-validated on load. An out-of-range
+interval or step is clamped. A key code Windows does not define is dropped, leaving that box
+reading `(not set)` and Start unavailable until you press a key into it; a stray modifier bit is
+cleared while the key itself is kept, since `Ctrl+F8` with one extra bit set is plainly meant to
+be `Ctrl+F8`. Delete the file to reset to defaults.
 
 ## How it works
 

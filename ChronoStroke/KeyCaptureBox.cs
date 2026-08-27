@@ -7,6 +7,19 @@ namespace ChronoStroke;
 /// <summary>
 /// A read-only text box that records the next key combination pressed into it.
 /// </summary>
+/// <remarks>
+/// There is deliberately no way to clear a captured combination, which the review raised as
+/// either a gap to fill or a decision to write down. It is the second. A combination is replaced
+/// by pressing another one, and emptying a box is not a state anything wants: Start requires a
+/// key to send <em>and</em> a registered hotkey, so a cleared box only produces an app that
+/// cannot run. An affordance whose single outcome is to disable the thing the window is for is
+/// worse than its absence.
+/// <para>
+/// The empty state itself is real and reachable — it is what a key code the loader rejected
+/// leaves behind, so it reads "(not set)" with Start unavailable until a key is pressed. That is
+/// a recovery path rather than a choice, which is exactly why it needs no button.
+/// </para>
+/// </remarks>
 internal sealed class KeyCaptureBox : TextBox
 {
     static KeyCaptureBox()
