@@ -11,6 +11,16 @@ Add the section before tagging.
 
 ## [Unreleased]
 
+### Changed
+
+- **Starting ChronoStroke while it is already running now brings the window you have back,
+  instead of opening a second one.** Two copies could not both hold the hotkey: the second one
+  reported the combination as taken by "another application", which was true and thoroughly
+  confusing, since the other application was ChronoStroke. Both could still be started by hand
+  from there, leaving two copies typing into whatever had focus with only one of them able to
+  stop. If Windows will not let the window come to the front — it refuses when you are busy in
+  another window — its taskbar button flashes instead.
+
 ## [1.4.0] - 2026-08-25
 
 Three safety fixes from a full architecture review of the repository. All three are things you
