@@ -47,6 +47,32 @@ internal static partial class NativeMethods
     [LibraryImport("user32.dll")]
     internal static partial short GetAsyncKeyState(int vKey);
 
+    /// <summary>
+    /// Sets a window's show state. Used with <see cref="SW_RESTORE"/> to bring the first
+    /// instance's window back from the taskbar.
+    /// </summary>
+    /// <remarks>
+    /// The BOOL result reports whether the window was <em>previously visible</em>, not whether
+    /// the call succeeded, so there is nothing here worth checking.
+    /// </remarks>
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    /// <summary>
+    /// Activates a window and brings it to the front.
+    /// </summary>
+    /// <remarks>
+    /// Best-effort by design. Windows refuses to let a background process steal focus from
+    /// whatever the user is working in; it flashes the taskbar button instead. A second instance
+    /// launched by the user normally qualifies — "the calling process received the last input
+    /// event" is one of the conditions the OS accepts — but it is not guaranteed, which is why
+    /// the result is not treated as a failure.
+    /// </remarks>
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static partial bool SetForegroundWindow(IntPtr hWnd);
+
     // ------------------------------------------------------------------ structs
 
     /// <summary>C: <c>typedef struct tagINPUT { DWORD type; union {...} }</c></summary>
@@ -177,6 +203,13 @@ internal static partial class NativeMethods
     internal const uint MOD_NOREPEAT = 0x4000;
 
     internal const int WM_HOTKEY = 0x0312;
+
+    /// <summary>
+    /// Activates the window and restores it from minimised, leaving a window that is already
+    /// showing where it is. The app cannot be maximised (ResizeMode="CanMinimize"), so this is
+    /// safe to send unconditionally rather than asking IsIconic first.
+    /// </summary>
+    internal const int SW_RESTORE = 9;
 
     /// <summary>Applications must use an id in the range 0x0000-0xBFFF.</summary>
     internal const int HotKeyId = 1;
