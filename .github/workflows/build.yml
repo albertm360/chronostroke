@@ -29,8 +29,38 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
+      # The csproj <Version> is a development placeholder — release.yml stamps the
+      # real one from the tag — but a placeholder nobody checks is a placeholder
+      # that rots, and this one sat at 1.1.0 through two releases. Holding it to
+      # the newest changelog heading gives it a rule that can actually be applied:
+      # the heading is written before the release, so the two move together.
+      - name: Check the version matches the newest changelog section
+        shell: pwsh
+        run: |
+          $csproj = 'ChronoStroke/ChronoStroke.csproj'
+          $version = ([xml](Get-Content $csproj)).Project.PropertyGroup.Version |
+              Where-Object { $_ }
+          if (-not $version) { throw "No <Version> found in $csproj." }
+
+          # First heading wins: the changelog is newest-first, and Unreleased is
+          # skipped because it is a holding area rather than a version.
+          $heading = Get-Content CHANGELOG.md |
+              Select-String -Pattern '^## \[(\d+\.\d+\.\d+)\]' |
+              Select-Object -First 1
+          if (-not $heading) { throw 'CHANGELOG.md has no released version section.' }
+          $newest = $heading.Matches[0].Groups[1].Value
+
+          if ($version -ne $newest) {
+              throw "csproj <Version> is $version but the newest CHANGELOG.md section is $newest."
+          }
+          Write-Output "Version $version matches the newest changelog section."
+
       # -warnaserror because the project builds clean today. A warning arriving
       # in CI is a warning nobody will read, and the count only ever grows.
+      #
+      # Kept here as well as in Directory.Build.props. The props file is what makes
+      # the gate felt while writing the code; this flag is the workflow stating its
+      # own requirement, so editing that file cannot quietly switch CI's gate off.
       - name: Build
         run: dotnet build --configuration Release -warnaserror
 

@@ -1,13 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- net10.0-windows with UseWPF because the types under test speak WPF's vocabulary:
+    <!-- The shared net10.0-windows and UseWPF in Directory.Build.props are load-bearing here
+         too, not just inherited noise: the types under test speak WPF's vocabulary, since
          KeyCombo carries a ModifierKeys and resolves key names through KeyInterop. -->
-    <TargetFramework>net10.0-windows</TargetFramework>
-    <UseWPF>true</UseWPF>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
 
     <!-- Never shipped. This project exists to be run by `dotnet test`, not published. -->
     <IsPackable>false</IsPackable>

@@ -6,7 +6,7 @@ namespace ChronoStroke;
 /// <summary>
 /// Interaction logic for App.xaml
 /// </summary>
-public partial class App : Application
+internal partial class App : Application
 {
     /// <summary>Stops a crash inside the crash handler from looping the dialog forever.</summary>
     private bool _crashing;

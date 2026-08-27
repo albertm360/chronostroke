@@ -77,7 +77,7 @@ internal static class KeystrokeSender
         // are inserted serially and are NOT interleaved with real keyboard input or with other
         // SendInput calls — so a combo can never be torn apart halfway through.
         var inserted = NativeMethods.SendInput((uint)batch.Length, ref batch[0], NativeMethods.InputSize);
-        var error = inserted == batch.Length ? 0 : Marshal.GetLastWin32Error();
+        var error = inserted == batch.Length ? 0 : Marshal.GetLastPInvokeError();
         return new SendOutcome(batch.Length, inserted, error);
     }
 

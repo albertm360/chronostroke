@@ -11,6 +11,12 @@ Add the section before tagging.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-27
+
+Two things you can notice, from the remainder of the architecture review. Most of the work behind
+this release is internal — the view model and the repeat engine were reorganised and are now far
+better covered by tests — and none of that changes what the app does.
+
 ### Changed
 
 - **Starting ChronoStroke while it is already running now brings the window you have back,
@@ -20,6 +26,16 @@ Add the section before tagging.
   from there, leaving two copies typing into whatever had focus with only one of them able to
   stop. If Windows will not let the window come to the front — it refuses when you are busy in
   another window — its taskbar button flashes instead.
+
+### Fixed
+
+- **A hand-edited `settings.json` with a nonsense key code no longer loads a key that cannot be
+  sent.** The interval and the step were checked on load and the two key codes were not, while
+  the README said every value was re-validated. A key outside the range Windows defines now
+  clears that box to "(not set)", leaving Start disabled until you pick one, rather than looking
+  configured and doing nothing when you press it. A stray modifier bit is cleared instead of
+  dropping the combination, since `Ctrl+F8` with one extra bit set is plainly meant to be
+  `Ctrl+F8`.
 
 ## [1.4.0] - 2026-08-25
 

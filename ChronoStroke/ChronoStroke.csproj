@@ -2,10 +2,6 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <UseWPF>true</UseWPF>
     <!-- Required by [LibraryImport]: the source generator emits pointer-based marshalling
          stubs. This does not make our own code unsafe - we write no pointer code. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -24,14 +20,18 @@
     <Copyright>Copyright © 2026 Albert Morlà</Copyright>
     <ApplicationIcon>ChronoStroke.ico</ApplicationIcon>
     <!-- Development placeholder only. Released builds are stamped from the git tag by
-         .github/workflows/release.yml, which passes -p:Version explicitly. Kept in step with the
-         most recent release so a local build is not wildly misleading. -->
-    <Version>1.1.0</Version>
+         .github/workflows/release.yml, which passes -p:Version explicitly.
+
+         It must match the newest heading in CHANGELOG.md, and build.yml now fails if it does
+         not. The old rule was "keep it in step with the most recent release", which is why it
+         sat at 1.1.0 through two of them: that version only becomes correct at the moment of
+         tagging, so there is no point in the cycle at which anyone is prompted to change it.
+         The changelog heading moves first, before the release, which makes it something a
+         check can hold this to. -->
+    <Version>1.5.0</Version>
   </PropertyGroup>
 
   <PropertyGroup>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-
     <!-- PublishSelfContained rather than SelfContained: the former applies only to publish,
          whereas SelfContained would also copy the whole runtime into bin on every ordinary
          build, for no benefit during development. -->
@@ -50,6 +50,13 @@
 
     <!-- PublishTrimmed is deliberately absent: trimming is not supported for WPF. It builds,
          then fails at runtime when XAML resolves a type by name that the trimmer removed. -->
+
+    <!-- InvariantGlobalization is absent for the same reason, and it was measured rather than
+         assumed. It is normally a size lever; here it is not. Two publishes, everything else
+         identical: 61,538,769 bytes without it against 61,538,876 with — a 107-byte *increase*.
+         Nothing is saved because the ICU data is not what makes this exe large, and turning it
+         on would change how the culture-sensitive parsing in BoundedIntField behaves for a
+         measured saving of less than nothing. -->
 
     <!-- PublishReadyToRun is absent because it was measured, not assumed. Precompiling makes
          cold start *worse* here: the R2R images add 4.6 MB to the exe, and every byte of that

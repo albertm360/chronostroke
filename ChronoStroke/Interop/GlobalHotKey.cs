@@ -76,7 +76,7 @@ internal sealed class GlobalHotKey(IntPtr windowHandle) : IHotKeyRegistration
                 ToWin32Modifiers(combo.Modifiers) | NativeMethods.MOD_NOREPEAT,
                 combo.VirtualKey))
         {
-            var code = Marshal.GetLastWin32Error();
+            var code = Marshal.GetLastPInvokeError();
             error = code == NativeMethods.ErrorHotKeyAlreadyRegistered
                 ? $"{combo.DisplayName} is already in use by another application."
                 : $"Could not register {combo.DisplayName} (Win32 error {code}).";
@@ -89,6 +89,21 @@ internal sealed class GlobalHotKey(IntPtr windowHandle) : IHotKeyRegistration
         return true;
     }
 
+    /// <summary>
+    /// Releases the registration, if there is one.
+    /// </summary>
+    /// <remarks>
+    /// The state is cleared whether or not the call succeeded, and that is deliberate rather
+    /// than an oversight. UnregisterHotKey fails when there is nothing registered under this id
+    /// for this window — which is to say, when the thing this method exists to achieve is
+    /// already true. Keeping <c>_registered</c> set on failure would mean the next TryRegister
+    /// tried to unregister it again, failed again, and stayed stuck; the honest reading of a
+    /// failure here is that the hotkey is gone either way.
+    /// <para>
+    /// What was wrong before was discarding the result silently. It is now read, so a failure
+    /// that is <em>not</em> the expected one can be told apart — see <see cref="LastUnregisterError"/>.
+    /// </para>
+    /// </remarks>
     public void Unregister()
     {
         if (!_registered)
@@ -96,10 +111,24 @@ internal sealed class GlobalHotKey(IntPtr windowHandle) : IHotKeyRegistration
             return;
         }
 
-        NativeMethods.UnregisterHotKey(windowHandle, NativeMethods.HotKeyId);
+        LastUnregisterError = NativeMethods.UnregisterHotKey(windowHandle, NativeMethods.HotKeyId)
+            ? 0
+            : Marshal.GetLastPInvokeError();
+
         _registered = false;
         Current = default;
     }
+
+    /// <summary>
+    /// The Win32 error from the most recent <see cref="Unregister"/>, or 0 if it succeeded.
+    /// </summary>
+    /// <remarks>
+    /// Exposed for the tests rather than for the app: there is nothing a user could do about a
+    /// failure here, and a message about it would arrive while the window is closing. Reading
+    /// the result is still worth it — a silently discarded return is how a wrong window handle
+    /// or a mismatched id stays invisible forever.
+    /// </remarks>
+    internal int LastUnregisterError { get; private set; }
 
     /// <summary>
     /// True for the handful of keys that can be registered on their own without taking a key
