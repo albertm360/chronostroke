@@ -1,0 +1,27 @@
+<Project>
+
+  <!--
+    Properties both projects declared identically. The MSBuild SDK imports this before either
+    csproj, so each one now says only what makes it different.
+
+    Deliberately not moved here: everything about publishing (single file, self-contained,
+    compression) and the assembly metadata, which belong to the app alone — the test project is
+    never published, and giving it a Product and a Copyright would be describing something that
+    does not ship.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!--
+      The same gate CI applies, felt where the code is written rather than ten minutes later in
+      a pull request. build.yml still passes -warnaserror explicitly: a workflow that states its
+      own requirements does not quietly stop enforcing them if this file is edited.
+    -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+</Project>
