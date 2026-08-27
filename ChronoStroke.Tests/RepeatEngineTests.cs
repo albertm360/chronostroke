@@ -28,17 +28,57 @@ public class RepeatEngineTests
         batch.Length > 0
         && (batch[^1].U.ki.dwFlags & NativeMethods.KEYEVENTF_KEYUP) != 0;
 
+    /// <summary>How long a test will wait for the loop to get going before giving up.</summary>
+    private const int WaitTimeoutMs = 10_000;
+
     /// <summary>Records every batch the loop sends and reports success, as SendInput would.</summary>
     private sealed class Recorder
     {
         private readonly ConcurrentQueue<NativeMethods.INPUT[]> _batches = new();
 
+        private readonly TaskCompletionSource _started =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public NativeMethods.INPUT[][] Batches => [.. _batches];
+
+        /// <summary>Completes the moment the loop sends anything at all.</summary>
+        public Task Started => _started.Task;
 
         public SendOutcome Send(NativeMethods.INPUT[] batch)
         {
             _batches.Enqueue(batch);
+            _started.TrySetResult();
             return new SendOutcome(batch.Length, (uint)batch.Length, 0);
+        }
+    }
+
+    /// <summary>
+    /// Waits until the loop is genuinely under way, rather than assuming a fixed delay was enough.
+    /// </summary>
+    /// <remarks>
+    /// CI caught this out where a developer machine never does. A test that starts the loop, waits
+    /// 15 ms and then stops it is assuming the thread pool dequeued the work item inside those
+    /// 15 ms — and on a loaded runner it does not. Start hands the token to Task.Run, so a Stop
+    /// arriving first makes the pool skip RunAsync altogether: nothing is sent, and an assertion
+    /// on the last batch reads off the end of an empty array.
+    /// <para>
+    /// An empty recorder is proof of exactly that, which is what makes this the right signal to
+    /// wait on: RunAsync's finally sends a key-up on every path it can take, so any entry at all
+    /// leaves at least one batch behind.
+    /// </para>
+    /// </remarks>
+    private static async Task WaitForBatchesAsync(Recorder recorder, int count)
+    {
+        var deadline = Environment.TickCount64 + WaitTimeoutMs;
+
+        while (recorder.Batches.Length < count)
+        {
+            Assert.True(
+                Environment.TickCount64 < deadline,
+                $"expected at least {count} batches within {WaitTimeoutMs} ms, "
+                + $"saw {recorder.Batches.Length}");
+
+            await Task.Delay(5);
         }
     }
 
@@ -52,9 +92,10 @@ public class RepeatEngineTests
         var recorder = new Recorder();
         await using var engine = new RepeatEngine { Send = recorder.Send };
 
-        // Interval 1000 gives the full 40 ms hold; stopping after 15 ms lands inside it.
+        // Interval 1000 gives the full 40 ms hold. Stopping the instant the press is recorded
+        // lands inside it — and unlike a fixed delay, it cannot land before the loop has begun.
         engine.Start(X, intervalMs: 1000);
-        await Task.Delay(15);
+        await recorder.Started.WaitAsync(TimeSpan.FromMilliseconds(WaitTimeoutMs));
         await engine.StopAsync();
 
         var batches = recorder.Batches;
@@ -74,11 +115,10 @@ public class RepeatEngineTests
         await using var engine = new RepeatEngine { Send = recorder.Send };
 
         engine.Start(X, intervalMs: 50);
-        await Task.Delay(200);
+        await WaitForBatchesAsync(recorder, 4);
         await engine.StopAsync();
 
         var batches = recorder.Batches;
-        Assert.True(batches.Length >= 4, $"expected several cycles, saw {batches.Length} batches");
         Assert.True(IsKeyUp(batches[^1]), "the key must be up after the loop unwinds");
     }
 
@@ -89,7 +129,7 @@ public class RepeatEngineTests
         await using var engine = new RepeatEngine { Send = recorder.Send };
 
         engine.Start(X, intervalMs: 50);
-        await Task.Delay(200);
+        await WaitForBatchesAsync(recorder, 4);
         await engine.StopAsync();
 
         // The finally adds one extra release on the way out, so the pairs are checked rather
@@ -124,15 +164,35 @@ public class RepeatEngineTests
     public async Task ARepeatedFailureIsReportedOnce()
     {
         var reports = new ConcurrentQueue<string>();
+        var sends = 0;
+
         await using var engine = new RepeatEngine
         {
             // Nothing inserted, with a plausible Win32 error — what a blocked SendInput looks like.
-            Send = batch => new SendOutcome(batch.Length, 0, 5),
+            Send = batch =>
+            {
+                Interlocked.Increment(ref sends);
+                return new SendOutcome(batch.Length, 0, 5);
+            },
         };
         engine.SendFailed += (_, message) => reports.Enqueue(message);
 
         engine.Start(X, intervalMs: 50);
-        await Task.Delay(250);
+
+        // Counted rather than timed. A fixed delay on a slow runner can pass this test without
+        // ever reaching a second failing tick, which is the only thing that could produce a
+        // second report — it would be asserting that nothing happened yet, not that the
+        // de-duplication works. Four cycles is eight sends.
+        var deadline = Environment.TickCount64 + WaitTimeoutMs;
+        while (Volatile.Read(ref sends) < 8)
+        {
+            Assert.True(
+                Environment.TickCount64 < deadline,
+                $"expected 8 sends within {WaitTimeoutMs} ms, saw {Volatile.Read(ref sends)}");
+
+            await Task.Delay(5);
+        }
+
         await engine.StopAsync();
 
         Assert.Single(reports);
@@ -161,7 +221,7 @@ public class RepeatEngineTests
 
         engine.Start(X, intervalMs: 1000);
         engine.Start(X, intervalMs: 1000);
-        await Task.Delay(15);
+        await recorder.Started.WaitAsync(TimeSpan.FromMilliseconds(WaitTimeoutMs));
         await engine.StopAsync();
 
         // One press from the single loop, one release from its finally. A second loop would have
@@ -226,12 +286,12 @@ public class RepeatEngineTests
         broken = false;
         var beforeSecondStart = recorder.Batches.Length;
         engine.Start(X, intervalMs: 1000);
-        await Task.Delay(50);
+
+        // The second run having sent anything is the assertion; waiting for it is how that is
+        // observed, rather than sleeping long enough that it has probably happened.
+        await WaitForBatchesAsync(recorder, beforeSecondStart + 1);
 
         Assert.True(engine.IsRunning, "the engine should accept a fresh Start");
-        Assert.True(
-            recorder.Batches.Length > beforeSecondStart,
-            "the second run should have sent something");
     }
 
     /// <summary>
@@ -248,7 +308,7 @@ public class RepeatEngineTests
         engine.Stopped += (_, _) => Interlocked.Increment(ref count);
 
         engine.Start(X, intervalMs: 1000);
-        await Task.Delay(15);
+        await recorder.Started.WaitAsync(TimeSpan.FromMilliseconds(WaitTimeoutMs));
         await engine.StopAsync();
         await engine.StopAsync();
 
@@ -278,7 +338,7 @@ public class RepeatEngineTests
         var engine = new RepeatEngine { Send = recorder.Send };
 
         engine.Start(X, intervalMs: 1000);
-        await Task.Delay(15);
+        await recorder.Started.WaitAsync(TimeSpan.FromMilliseconds(WaitTimeoutMs));
         await engine.DisposeAsync();
 
         Assert.False(engine.IsRunning);
