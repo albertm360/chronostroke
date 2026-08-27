@@ -51,6 +51,12 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
 
     private long _lastToggleTicks;
 
+    /// <summary>
+    /// Set for as long as a Stop is in progress, so the run being torn down cannot write over
+    /// the status line on its way out. See <see cref="SetRunStatus"/>.
+    /// </summary>
+    private bool _stopping;
+
     /// <summary>The interval box, its bounds and the last usable value it held.</summary>
     public BoundedIntField Interval { get; } = CreateIntervalField();
 
@@ -121,11 +127,11 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         Hotkey.Rejected += (_, message) => Status = message;
 
         // The loop runs on the thread pool, so these arrive off the UI thread.
-        _engine.SendFailed += (_, message) => OnUiThread(() => Status = message);
+        _engine.SendFailed += (_, message) => OnUiThread(() => SetRunStatus(message));
         _engine.WaitingForReleaseChanged += (_, waiting) => OnUiThread(() =>
-            Status = waiting
+            SetRunStatus(waiting
                 ? $"Waiting for you to let go of {Hotkey.Combo.DisplayName}…"
-                : RunningStatus());
+                : RunningStatus()));
 
         // The loop can end without anyone asking it to. SendFailed has already put the reason in
         // the status line by the time this arrives; this is what unlocks the fields and turns the
@@ -145,6 +151,41 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
         StartCommand.NotifyCanExecuteChanged();
         StepUpCommand.NotifyCanExecuteChanged();
         StepDownCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// Takes a status line from the engine, unless a Stop has already begun.
+    /// </summary>
+    /// <remarks>
+    /// The loop reports on a thread-pool thread and the report is marshalled here, so it can be
+    /// queued while the run that produced it is being torn down. Anything it has to say about
+    /// that run is stale by then, and writing it would leave the status line describing a loop
+    /// that is no longer running — over the top of "Stopped.", which is the one thing the user
+    /// just asked for and the only line still true.
+    /// <para>
+    /// Not reachable as the code stands, and the flag is here to stop that being an accident.
+    /// Every engine event goes through <see cref="OnUiThread"/> at the dispatcher's default
+    /// priority, and StopAsync writes "Stopped." only after awaiting the loop past its own
+    /// finally — so everything the run queued is already ahead of it, and same-priority
+    /// dispatcher work runs in order. That argument is correct and entirely invisible: it lives
+    /// in the interaction between three methods and would be broken by changing a priority, or
+    /// by a Stop that stopped joining the loop. A flag set before the await says it locally.
+    /// </para>
+    /// <para>
+    /// A run generation on the events themselves, as the review proposed, would also cover
+    /// events crossing from one run into the next. That cannot happen here: Start refuses while
+    /// a run is live, and StopAsync joins the loop before returning, so there is never more than
+    /// one run in flight. It would be a wider mechanism for a case the engine already prevents.
+    /// </para>
+    /// </remarks>
+    private void SetRunStatus(string message)
+    {
+        if (_stopping)
+        {
+            return;
+        }
+
+        Status = message;
     }
 
     /// <summary>
@@ -381,6 +422,8 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
+        _stopping = false;
+
         // Passing the hotkey lets the engine hold off until you have let go of it.
         _engine.Start(SendCombo, Interval.ValueOrLastValid, Hotkey.Combo);
         NotifyRunStateChanged();
@@ -390,6 +433,10 @@ internal sealed partial class MainViewModel : ObservableObject, IAsyncDisposable
     [RelayCommand(CanExecute = nameof(IsRunning))]
     private async Task StopAsync()
     {
+        // Set before the await, not after: the point is to disown whatever the loop has already
+        // queued about the run being torn down, and that runs while this awaits.
+        _stopping = true;
+
         await _engine.StopAsync();
         NotifyRunStateChanged();
         Status = "Stopped.";
